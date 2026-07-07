@@ -104,6 +104,7 @@ from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 from backend.services.injury_overlay import (
     apply_injury_penalty,
     load_injury_overlays_for_yahoo_players,
+    InjuryOverlay,
 )
 from backend.services.job_queue_service import submit_job as jq_submit, get_job_status as jq_status
 from backend.services.player_mapper import (
@@ -392,29 +393,14 @@ def _projection_fallback_score(yahoo_player: dict) -> tuple[float, str]:
     In a 10-team league every rostered player should have a PlayerScore — if many
     players hit this path it signals a data pipeline gap in job 100_019/100_029.
 
-    Scoring tiers:
-      - Steamer/Statcast data found (fusion_source != "population_prior"):
-            score from z_score, source = "projection_fallback"
-      - Truly no data (population prior only, z_score == 0.0):
-            score = 0.0, source = "no_score" — ranks below all real-scored players
+    IMPORTANT: Returns 0.0 for ALL fallback players to exclude them from active slot
+    consideration. The optimizer should only assign players with real projections to
+    active slots. If insufficient projection data exists, the optimizer will return an
+    error instead of filling slots with fallback players.
     """
-    from backend.fantasy_baseball.player_board import get_or_create_projection
-
-    projection = get_or_create_projection(yahoo_player)
-    z_score = float(projection.get("z_score") or 0.0)
-    ownership_pct = float(
-        yahoo_player.get("percent_owned", yahoo_player.get("owned_pct", 0.0)) or 0.0
-    )
-    fusion_source = projection.get("fusion_source", "population_prior")
-
-    # Population prior means player_board found no Steamer or Statcast data at all.
-    # z_score will be 0.0. Returning 0.0 ranks them below every real-scored player.
-    if fusion_source == "population_prior" and z_score == 0.0:
-        return 0.0, "no_score"
-
-    # Has real projection data (Steamer, steamer_db, SAVANT_ADJUSTED, etc.) — use it.
-    score = 50.0 + (z_score * 8.0) + min(ownership_pct, 100.0) * 0.05
-    return max(20.0, min(95.0, round(score, 2))), "projection_fallback"
+    # ALL fallback players return 0.0 to exclude from optimizer consideration
+    # This prevents injured players or players without real data from starting
+    return 0.0, "projection_fallback"
 
 
 def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict[str, dict]:
@@ -4893,6 +4879,9 @@ async def optimize_roster(
                 p.get("name", "unknown"), type(status_val), status_val
             )
 
+    # Load injury overlays for IL status detection (checks Yahoo status + DB overlays)
+    injury_overlays = load_injury_overlays_for_yahoo_players(db, raw_players)
+
     # Resolve Yahoo roster keys to BDL IDs using canonical yahoo_key linkage first.
     player_key_to_ids = _resolve_roster_player_bdl_ids(db, raw_players)
 
@@ -4949,12 +4938,15 @@ async def optimize_roster(
     # Build player data with scores; skip IL-designated players (they stay in IL slots)
     player_data = []
     il_player_count = 0
+    fallback_players = []  # Track fallback players for high-ownership alert
     for p in raw_players:
         player_key = p.get("player_key")
         if not player_key:
             continue
 
-        if _is_il_designated(p):
+        # Check IL status using Yahoo status + injury overlays
+        injury_overlay = injury_overlays.get(player_key)
+        if _is_il_designated(p, injury_overlay):
             il_player_count += 1
             continue
 
@@ -4966,11 +4958,74 @@ async def optimize_roster(
                 score = player_scores_map[bdl_id]
                 score_source = "player_scores"
             else:
-                score, score_source = _projection_fallback_score(p)
-                fallback_count += 1
+                # WORKAROUND: PlayerIDMapping corruption workaround
+                # Check if there's an alternative row with same mlbam_id but different bdl_id
+                # This handles cases where bdl_id field contains mlbam_id value
+                mlbam_id = player_key_to_ids[player_key].get("mlbam_id")
+                if mlbam_id:
+                    # Find alternative BDL IDs for this mlbam_id
+                    alt_mappings = db.query(PlayerIDMapping.bdl_id).filter(
+                        PlayerIDMapping.mlbam_id == mlbam_id,
+                        PlayerIDMapping.bdl_id != bdl_id,
+                        PlayerIDMapping.bdl_id.isnot(None)
+                    ).all()
+                    for alt_row in alt_mappings:
+                        alt_bdl_id = alt_row.bdl_id
+                        if alt_bdl_id in player_scores_map:
+                            # Found scores under alternative BDL ID!
+                            logger.info(
+                                "PlayerIDMapping corruption workaround: %s using alt bdl_id=%d instead of %d",
+                                player_key, alt_bdl_id, bdl_id
+                            )
+                            score = player_scores_map[alt_bdl_id]
+                            score_source = "player_scores"
+                            break
+
+                # WORKAROUND EXTENSION: If mlbam_id is missing, try full_name search
+                # This handles cases where corrupted row has no mlbam_id to link alternatives
+                if score_source == "default" and bdl_id not in player_scores_map:
+                    full_name = p.get("name", "")
+                    if full_name:
+                        # Find alternative rows by full_name
+                        alt_mappings = db.query(PlayerIDMapping.bdl_id).filter(
+                            PlayerIDMapping.full_name == full_name,
+                            PlayerIDMapping.bdl_id != bdl_id,
+                            PlayerIDMapping.bdl_id.isnot(None)
+                        ).all()
+                        for alt_row in alt_mappings:
+                            alt_bdl_id = alt_row.bdl_id
+                            if alt_bdl_id in player_scores_map:
+                                # Found scores under alternative BDL ID via name match!
+                                logger.info(
+                                    "PlayerIDMapping corruption workaround (name): %s using alt bdl_id=%d instead of %d",
+                                    player_key, alt_bdl_id, bdl_id
+                                )
+                                score = player_scores_map[alt_bdl_id]
+                                score_source = "player_scores"
+                                break
+
+                if score_source == "default":
+                    score, score_source = _projection_fallback_score(p)
+                    fallback_count += 1
+                    # Track fallback player for high-ownership alert
+                    ownership_percent = p.get("ownership", 0)
+                    if ownership_percent > 50:
+                        fallback_players.append({
+                            "name": p.get("name", "Unknown"),
+                            "ownership": ownership_percent,
+                            "player_key": player_key,
+                        })
         else:
             score, score_source = _projection_fallback_score(p)
             fallback_count += 1
+            # Track fallback player for high-ownership alert
+            ownership_percent = p.get("ownership", 0)
+            if ownership_percent > 50:
+                fallback_players.append({
+                    "name": p.get("name", "Unknown"),
+                    "ownership": ownership_percent,
+                    "player_key": player_key,
+                })
 
         player_data.append({
             "player_key": player_key,
@@ -4979,6 +5034,7 @@ async def optimize_roster(
             "current_position": p.get("selected_position", "BN"),
             "lineup_score": score,
             "score_source": score_source,
+            "is_fallback": score_source == "projection_fallback",
         })
 
     # TASK-5: Normalize hitter and pitcher scores to a common 0-100 scale
@@ -5057,6 +5113,44 @@ async def optimize_roster(
         p["player_key"]: [pos.upper() for pos in (p.get("eligible_positions") or [])]
         for p in hitter_data
     }
+
+    # OPTIMIZER SAFETY CHECK: Ensure sufficient real projection data before running solver
+    # Count players with real projections (score > 0 AND not fallback)
+    real_projection_players = [p for p in player_data if p.get("lineup_score", 0) > 0 and not p.get("is_fallback", False)]
+
+    # Count active slots (excluding BN and IL)
+    active_slots_count = sum(v for k, v in slot_capacity.items() if k not in ("BN", "IL", "IL60"))
+
+    # If fewer real projections than active slots, return error
+    if len(real_projection_players) < active_slots_count:
+        fallback_players = [p["name"] for p in player_data if p.get("is_fallback", False)]
+        missing_count = active_slots_count - len(real_projection_players)
+
+        logger.warning(
+            "Insufficient projection data: %d real projections vs %d active slots needed. "
+            "Fallback players: %s",
+            len(real_projection_players), active_slots_count, ", ".join(fallback_players[:5])
+        )
+
+        return RosterOptimizeResponse(
+            success=False,
+            message=(
+                f"Insufficient projection data — {len(real_projection_players)} of {active_slots_count} "
+                f"players have real projections. Cannot optimize reliably. "
+                f"{missing_count} player(s) missing projection data: {', '.join(fallback_players[:5])}"
+                + (f"..." if len(fallback_players) > 5 else "")
+            ),
+            target_date=target_date,
+            starters=[],
+            bench=[],
+            unrostered=[p["player_key"] for p in player_data],
+            data_date=actual_data_date,
+        )
+
+    logger.info(
+        "Optimizer safety check passed: %d real projections >= %d active slots",
+        len(real_projection_players), active_slots_count
+    )
 
     hitter_assignments = []
     if players_for_solver:
@@ -5137,6 +5231,28 @@ async def optimize_roster(
     if not schedule_available:
         base_msg += f" — WARNING: No MLB games found for {target_date} (off-day or schedule not yet available)"
 
+    # MONITORING: Log fallback rate and alert if high
+    active_player_count = len(raw_players) - il_player_count
+    if active_player_count > 0:
+        fallback_rate = fallback_count / active_player_count
+        logger.info(
+            "Optimizer fallback metrics: %d/%d players (%.1f%%)",
+            fallback_count, active_player_count, fallback_rate * 100
+        )
+        if fallback_rate > 0.10:
+            logger.warning(
+                "HIGH FALLBACK RATE ALERT: %d/%d players (%.1f%%) using projection fallback",
+                fallback_count, active_player_count, fallback_rate * 100
+            )
+
+    # MONITORING: Alert if high-ownership players have no projections
+    if fallback_players:
+        logger.warning(
+            "HIGH-OWNERSHIP FALLBACK ALERT: %d players with >50%% ownership using projection fallback: %s",
+            len(fallback_players),
+            ", ".join([f"{p['name']} ({p['ownership']}% owned)" for p in fallback_players])
+        )
+
     return RosterOptimizeResponse(
         success=True,
         message=base_msg,
@@ -5168,15 +5284,84 @@ _IL_SLOTS = frozenset({"IL", "IL60"})
 _EXEMPT_SLOTS = frozenset({"BN", "IL", "IL60"})
 
 
-def _is_il_designated(player: dict) -> bool:
-    """Return True if Yahoo status indicates an active IL designation.
+def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = None) -> bool:
+    """Return True if player has an active IL designation or injury status.
 
-    Matches: "IL", "IL10", "IL15", "IL60", "10-Day IL", "15-Day IL", "60-Day IL".
+    Checks THREE sources:
+    1. player["status"] - Yahoo roster slot (IL, IL10, IL15, IL60)
+    2. player["injury_note"] - Yahoo injury description
+    3. injury_overlay.status - DB injury overlay (60-Day IL, 15-Day IL, etc.)
+
+    Matches: "IL", "IL10", "IL15", "IL60", "10-Day IL", "15-Day IL", "60-Day IL",
+             "NA", "OUT", "BEREAVEMENT", "DTD", "DL".
+
+    IMPORTANT: Does NOT match position names like "Util" (contains "il" but is a position).
+    Does NOT match team names containing "IL" (e.g., "IL" in "Philadelphia").
 
     Defensive: handles status as string, boolean, or None.
     Logs warning for unexpected types to aid data debugging.
     """
+    # Keywords that indicate IL or unavailability (word boundaries matter)
+    # Must be standalone or with standard separators (-, space, /)
+    IL_KEYWORDS = frozenset({
+        "IL", "IL10", "IL15", "IL60", "IL-10", "IL-15", "IL-60",
+        "10-DAY", "15-DAY", "60-DAY", "10DAY", "15DAY", "60DAY",
+        "10 DAY", "15 DAY", "60 DAY",
+        "DL", "DL10", "DL15", "DL60", "DL-10", "DL-15", "DL-60",
+        "NA", "OUT", "BEREAVEMENT", "DTD", "SUSPENDED",
+    })
+
+    # Position names that should NOT be treated as IL (contains "il" substring)
+    POSITION_NAMES = frozenset({"UTIL", "UTILILY", "FIL", "PHILIP"})
+
+    def _contains_il_keyword(text: str) -> bool:
+        """Check if text contains an IL keyword as a whole word/pattern, not substring."""
+        if not text:
+            return False
+        text_upper = text.upper().strip()
+
+        # Skip position names containing "il" substring
+        if text_upper in POSITION_NAMES:
+            return False
+
+        # Check for IL keywords with word boundaries
+        # "IL" matches "IL", "IL,", "IL " but NOT "Util", "Philadelphia"
+        for keyword in IL_KEYWORDS:
+            # Match as whole word or with separators
+            pattern = f"(^|[^A-Z]){keyword}([^A-Z]|$)"
+            import re
+            if re.search(pattern, text_upper, re.IGNORECASE):
+                return True
+
+        # Special case: status starts with IL (IL, IL10, IL15, etc.)
+        if text_upper.startswith("IL") and len(text_upper) > 2:
+            # Check if followed by number or end of string
+            rest = text_upper[2:]
+            if not rest or rest.isdigit() or rest.startswith("-"):
+                return True
+
+        # Special case: -IL suffix (e.g., "PLAYER-IL")
+        if "-IL" in text_upper or text_upper.endswith("-IL"):
+            return True
+
+        return False
+
+    # Check 1: player["status"] (Yahoo roster slot)
     raw_status = player.get("status")
+    if raw_status is not None and not isinstance(raw_status, bool):
+        if _contains_il_keyword(str(raw_status)):
+            return True
+
+    # Check 2: player["injury_note"] (Yahoo injury description)
+    raw_note = player.get("injury_note")
+    if raw_note is not None and not isinstance(raw_note, bool):
+        if _contains_il_keyword(str(raw_note)):
+            return True
+
+    # Check 3: injury_overlay.status (DB injury overlay)
+    if injury_overlay is not None and injury_overlay.status:
+        if _contains_il_keyword(str(injury_overlay.status)):
+            return True
 
     # Defensive: handle boolean status values (data corruption/API change)
     if isinstance(raw_status, bool):
@@ -5185,15 +5370,8 @@ def _is_il_designated(player: dict) -> bool:
             "Treating as NOT IL-designated. Data may be corrupted.",
             player.get("name", "unknown"), raw_status
         )
-        return False
 
-    # Defensive: handle None or missing status
-    if raw_status is None:
-        return False
-
-    # Expected case: status is string
-    status = str(raw_status).upper().strip()
-    return status.startswith("IL") or "-IL" in status
+    return False
 
 
 def _can_fill_slot(eligible_positions, slot, player_name) -> bool:
