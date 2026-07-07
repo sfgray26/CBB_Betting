@@ -4321,6 +4321,32 @@ async def move_roster_player(
                 ),
             ))
 
+    # Map generic "OF" to specific Yahoo position (LF/CF/RF) based on eligibility
+    target_position = request.target_position
+    if target_position == "OF":
+        _player_eligible = player_to_move.get("eligible_positions") or player_to_move.get("positions") or []
+        try:
+            target_position = _map_of_position(_player_eligible, player_to_move.get("name", request.player_key))
+            logger.debug(
+                "roster/move: Mapped OF→%s for %s (eligible: %s)",
+                target_position, player_to_move.get('name', request.player_key), _player_eligible
+            )
+        except ValueError as exc:
+            return _cors_response(RosterMoveResponse(
+                success=False,
+                player_key=request.player_key,
+                from_position=from_position,
+                to_position=request.target_position,
+                message=str(exc),
+                freshness=FreshnessMetadata(
+                    primary_source="yahoo",
+                    fetched_at=None,
+                    computed_at=now_et,
+                    staleness_threshold_minutes=60,
+                    is_stale=False,
+                ),
+            ))
+
     # Build lineup list: all players with the moved player's position updated
     # SWAP LOGIC: If target slot is occupied, move the occupant to the source slot
     # This handles the common case: "move Walker BN→Util" when Util is already filled
@@ -4328,7 +4354,7 @@ async def move_roster_player(
     for p in raw_players:
         occupant_key = p.get("player_key")
         occupant_pos = p.get("selected_position", "BN")
-        if occupant_key != request.player_key and occupant_pos == request.target_position:
+        if occupant_key != request.player_key and occupant_pos == target_position:
             target_slot_occupant = p
             break
 
@@ -4339,10 +4365,10 @@ async def move_roster_player(
             continue
 
         if player_key == request.player_key:
-            # Move to target position
+            # Move to target position (mapped from OF to LF/CF/RF if needed)
             lineup.append({
                 "player_key": player_key,
-                "position": request.target_position,
+                "position": target_position,
             })
         elif target_slot_occupant and player_key == target_slot_occupant.get("player_key"):
             # Move the displaced player to the source slot (swap)
@@ -4355,7 +4381,7 @@ async def move_roster_player(
             logger.info(
                 "roster/move: SWAP - moving %s from %s to %s to make room for %s",
                 target_slot_occupant.get("name", player_key),
-                request.target_position,
+                target_position,
                 swap_target,
                 request.player_key
             )
@@ -4370,7 +4396,7 @@ async def move_roster_player(
     # Apply the lineup change
     logger.info(
         "roster/move: attempting move - player=%s from=%s to=%s",
-        request.player_key, from_position, request.target_position
+        request.player_key, from_position, target_position
     )
     try:
         result = client.set_lineup(team_key=team_key, lineup=lineup)
@@ -4386,7 +4412,7 @@ async def move_roster_player(
             success=False,
             player_key=request.player_key,
             from_position=from_position,
-            to_position=request.target_position,
+            to_position=target_position,
             message=f"Yahoo authentication error: {str(exc)}",
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
@@ -4402,7 +4428,7 @@ async def move_roster_player(
             success=False,
             player_key=request.player_key,
             from_position=from_position,
-            to_position=request.target_position,
+            to_position=target_position,
             message=f"Yahoo API error: {str(exc)}",
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
@@ -4418,7 +4444,7 @@ async def move_roster_player(
             success=False,
             player_key=request.player_key,
             from_position=from_position,
-            to_position=request.target_position,
+            to_position=target_position,
             message=f"Unexpected error: {str(exc)}",
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
@@ -4566,30 +4592,41 @@ async def bulk_apply_roster_moves(
     if validation_errors:
         raise HTTPException(status_code=400, detail={"errors": validation_errors})
 
-    # Build full lineup with all moves applied at once (atomic)
+    # Phase 5: Map generic "OF" to specific Yahoo positions (LF/CF/RF)
+    # Yahoo requires specific outfield positions, not generic "OF"
     move_map = {m.player_key: m.target_position for m in request.moves}
+    mapped_moves = {}
+    for move in request.moves:
+        target_pos = move.target_position
+        player = roster_by_key.get(move.player_key, {})
+        player_name = player.get("name", move.player_key)
+        eligible = player.get("eligible_positions") or player.get("positions") or []
+
+        # Map "OF" to specific position based on eligibility
+        if target_pos == "OF":
+            try:
+                target_pos = _map_of_position(eligible, player_name)
+                logger.debug(
+                    "bulk_apply: Mapped OF→%s for %s (eligible: %s)",
+                    target_pos, player_name, eligible
+                )
+            except ValueError as exc:
+                validation_errors.append(str(exc))
+
+        mapped_moves[move.player_key] = target_pos
+
+    if validation_errors:
+        raise HTTPException(status_code=400, detail={"errors": validation_errors})
+
+    # Build full lineup with all moves applied at once (atomic)
     lineup = []
     for player in raw_players:
         pk = player.get("player_key")
         if not pk:
             continue
-        target = move_map.get(pk, player.get("selected_position", "BN"))
+        # Use mapped position if player is in moves, otherwise keep current position
+        target = mapped_moves.get(pk, player.get("selected_position", "BN"))
         lineup.append({"player_key": pk, "position": target})
-
-    # DIAGNOSTIC: Log the exact payload being sent to Yahoo
-    logger.info(
-        "bulk_apply: Sending lineup to Yahoo - team_key=%s, date=%s, total_players=%d",
-        team_key,
-        datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
-        len(lineup)
-    )
-    for entry in lineup:
-        logger.info(
-            "bulk_apply: player_key=%s → position=%s",
-            entry.get("player_key"),
-            entry.get("position")
-        )
-    logger.info("bulk_apply: Full lineup payload: %s", lineup)
 
     try:
         result = client.set_lineup(team_key=team_key, lineup=lineup)
@@ -5522,6 +5559,41 @@ def _can_fill_slot(eligible_positions, slot, player_name) -> bool:
         return any(p in pitcher_positions for p in positions)
 
     return False
+
+
+def _map_of_position(eligible_positions, player_name) -> str:
+    """Map generic 'OF' to specific Yahoo position (LF/CF/RF) based on eligibility.
+
+    Yahoo requires specific outfield positions (LF, CF, RF) rather than generic 'OF'.
+    This function maps players assigned to 'OF' to their most specific eligible position.
+
+    Priority order: LF > CF > RF > Util
+
+    Returns:
+        The specific position code to send to Yahoo.
+        Raises ValueError if player is not eligible for any OF position.
+    """
+    if not eligible_positions:
+        raise ValueError(
+            f"{player_name} assigned to OF but has no eligible_positions"
+        )
+
+    positions = [p.upper() for p in eligible_positions] if isinstance(eligible_positions, list) else [eligible_positions.upper()]
+
+    # Priority order for specific outfield positions
+    for specific_pos in ["LF", "CF", "RF"]:
+        if specific_pos in positions:
+            return specific_pos
+
+    # If no specific OF position, check if eligible for Util (fallback for OF-eligible players)
+    if "UTIL" in positions:
+        return "Util"
+
+    # Player has no OF eligibility at all
+    raise ValueError(
+        f"{player_name} assigned to OF but not eligible for LF/CF/RF/Util — "
+        f"eligible: {', '.join(positions) or 'unknown'}"
+    )
 
 
 @router.get("/api/fantasy/players/valuations")

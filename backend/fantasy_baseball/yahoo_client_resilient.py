@@ -1360,44 +1360,38 @@ class YahooFantasyClient:
                 f'<date>{date}</date><players>{player_xml}</players></roster></fantasy_content>'
             ).encode("utf-8")
 
-        # DIAGNOSTIC: Log the exact XML payload being sent to Yahoo
-        xml_payload = _build_xml(lineup)
-        _log.info("set_lineup: Sending XML payload to Yahoo: %s", xml_payload.decode("utf-8"))
-
         # Attempt full batch first (fast path)
-        resp = self._session.put(url, data=xml_payload, headers=headers)
-        _log.info("set_lineup: Yahoo response status=%d, body=%s", resp.status_code, resp.text)
+        resp = self._session.put(url, data=_build_xml(lineup), headers=headers)
 
         if resp.status_code in (200, 204):
+            _log.debug("set_lineup: Success - applied %d players", len(lineup))
             return {"applied": [p["player_key"] for p in lineup], "skipped": [], "warnings": []}
 
         # If Yahoo returns "game_ids don't match", fall back to player-by-player
         # so stale/traded players are skipped rather than blocking the whole lineup.
         if "game_ids" in resp.text or "game_id" in resp.text.lower():
             _log.warning("set_lineup batch rejected (game_id mismatch) — retrying per-player")
-            _log.info("set_lineup: Full Yahoo error response: %s", resp.text)
             applied, skipped, warnings = [], [], []
             for p in lineup:
                 r = self._session.put(url, data=_build_xml([p]), headers=headers)
-                _log.info("set_lineup: Per-player retry for %s: status=%d, response=%s",
-                         p.get("player_key"), r.status_code, r.text)
                 if r.status_code in (200, 204):
                     applied.append(p["player_key"])
+                    _log.debug("set_lineup: Per-player success for %s (pos=%s)", p.get("player_key"), p.get("position"))
                 else:
                     skipped.append(p["player_key"])
                     msg = f"Skipped {p['player_key']} (pos={p['position']}): {r.text}"
                     _log.warning(msg)
                     warnings.append(msg)
             if not applied:
+                _log.error("set_lineup: All players failed - first error: %s", resp.text[:500])
                 raise YahooAPIError(
-                    f"set_lineup failed for all {len(skipped)} player(s): {resp.text}",
+                    f"set_lineup failed for all {len(skipped)} player(s): {resp.text[:500]}",
                     resp.status_code,
                 )
             return {"applied": applied, "skipped": skipped, "warnings": warnings}
 
-        # DIAGNOSTIC: Log the full Yahoo error response before raising
-        _log.error("set_lineup: Yahoo API error - status=%d, full_response=%s", resp.status_code, resp.text)
-        raise YahooAPIError(f"set_lineup failed: {resp.status_code} — {resp.text}", resp.status_code)
+        _log.error("set_lineup: Yahoo API error - status=%d, response: %s", resp.status_code, resp.text[:500])
+        raise YahooAPIError(f"set_lineup failed: {resp.status_code} — {resp.text[:500]}", resp.status_code)
 
     def get_scoreboard(self, week: Optional[int] = None) -> list[dict]:
         """Fetch matchup scoreboard for a week (defaults to current).
