@@ -4971,13 +4971,20 @@ async def optimize_roster(
                     ).all()
                     for alt_row in alt_mappings:
                         alt_bdl_id = alt_row.bdl_id
-                        if alt_bdl_id in player_scores_map:
+                        # BUG FIX: Query DB directly instead of checking player_scores_map
+                        # The pre-built map only contains corrupted bdl_ids, not alternatives
+                        alt_score = db.query(PlayerScore).filter(
+                            PlayerScore.bdl_player_id == alt_bdl_id,
+                            PlayerScore.as_of_date <= target_date,
+                            PlayerScore.window_days == 14
+                        ).order_by(PlayerScore.as_of_date.desc()).first()
+                        if alt_score:
                             # Found scores under alternative BDL ID!
                             logger.info(
-                                "PlayerIDMapping corruption workaround: %s using alt bdl_id=%d instead of %d",
-                                player_key, alt_bdl_id, bdl_id
+                                "PlayerIDMapping corruption workaround: %s using alt bdl_id=%d (score=%.1f) instead of %d",
+                                player_key, alt_bdl_id, alt_score.score_0_100, bdl_id
                             )
-                            score = player_scores_map[alt_bdl_id]
+                            score = alt_score.score_0_100
                             score_source = "player_scores"
                             break
 
@@ -4994,13 +5001,19 @@ async def optimize_roster(
                         ).all()
                         for alt_row in alt_mappings:
                             alt_bdl_id = alt_row.bdl_id
-                            if alt_bdl_id in player_scores_map:
+                            # BUG FIX: Query DB directly instead of checking player_scores_map
+                            alt_score = db.query(PlayerScore).filter(
+                                PlayerScore.bdl_player_id == alt_bdl_id,
+                                PlayerScore.as_of_date <= target_date,
+                                PlayerScore.window_days == 14
+                            ).order_by(PlayerScore.as_of_date.desc()).first()
+                            if alt_score:
                                 # Found scores under alternative BDL ID via name match!
                                 logger.info(
-                                    "PlayerIDMapping corruption workaround (name): %s using alt bdl_id=%d instead of %d",
-                                    player_key, alt_bdl_id, bdl_id
+                                    "PlayerIDMapping corruption workaround (name): %s using alt bdl_id=%d (score=%.1f) instead of %d",
+                                    player_key, alt_bdl_id, alt_score.score_0_100, bdl_id
                                 )
-                                score = player_scores_map[alt_bdl_id]
+                                score = alt_score.score_0_100
                                 score_source = "player_scores"
                                 break
 
