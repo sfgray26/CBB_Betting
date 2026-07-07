@@ -1086,13 +1086,13 @@ class YahooFantasyClient:
                                 if "player_key" in chunk:
                                     pk = chunk["player_key"]
                                 own = chunk.get("ownership", {})
-                                if own:
-                                    # League context uses percent_rostered (not percent_owned)
-                                    pct_block = own.get("percent_rostered", {})
-                                    if isinstance(pct_block, dict):
-                                        pct = self._safe_float(pct_block.get("value", 0), 0.0)
-                                    elif pct_block is not None:
-                                        pct = self._safe_float(pct_block, 0.0)
+                                # FIX: Process ownership even if dict is empty (0% ownership is valid)
+                                # League context uses percent_rostered (not percent_owned)
+                                pct_block = own.get("percent_rostered", {})
+                                if isinstance(pct_block, dict):
+                                    pct = self._safe_float(pct_block.get("value", 0), 0.0)
+                                elif pct_block is not None:
+                                    pct = self._safe_float(pct_block, 0.0)
 
                         if pk and pct is not None:
                             # Update even if pct = 0.0 (zero ownership is valid data)
@@ -1105,8 +1105,8 @@ class YahooFantasyClient:
             if enriched_count > 0:
                 logger.debug("_enrich_ownership_batch: Enriched %d players in chunk %d", enriched_count, i // 25 + 1)
 
-        # DIAGNOSTIC: Log total enrichment count
-        logger.info("_enrich_ownership_batch: Total enriched %d/%d players", enriched_count, len(player_keys))
+            # DIAGNOSTIC: Log total enrichment count
+            logger.info("_enrich_ownership_batch: Total enriched %d/%d players", enriched_count, len(player_keys))
         except Exception as exc:
             logger.warning("_enrich_ownership_batch failed (non-fatal): %s", exc)
 
