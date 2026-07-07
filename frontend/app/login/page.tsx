@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { setApiKey } from '@/lib/api'
+import { setApiKey, getRedirectUrl } from '@/lib/api'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -26,7 +26,7 @@ export default function LoginPage() {
       })
       if (res.ok) {
         setApiKey(apiKey.trim())
-        router.push('/performance')
+        router.push(getRedirectUrl())
       } else if (res.status === 401) {
         setError('Invalid API key. Please check and try again.')
       } else {

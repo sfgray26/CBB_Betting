@@ -7,7 +7,6 @@
  * Base URL is configured via NEXT_PUBLIC_API_URL (see .env.local.example).
  */
 
-import Cookies from 'js-cookie'
 import type {
   BetLog,
   BulkRosterMove,
@@ -48,19 +47,19 @@ import type {
   RosterActionResponse,
 } from '@/lib/types'
 
+// Import auth functions for internal use and re-export
+import {
+  getApiKey as authGetApiKey,
+  setApiKey as authSetApiKey,
+  clearApiKey as authClearApiKey,
+  isAuthenticated,
+  getRedirectUrl
+} from '@/lib/auth'
+
+// Re-export for external consumers
+export { getApiKey as authGetApiKey as getApiKey, setApiKey as authSetApiKey as setApiKey, clearApiKey as authClearApiKey as clearApiKey, isAuthenticated, getRedirectUrl }
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-
-export function getApiKey(): string {
-  return Cookies.get('cbb_api_key') ?? ''
-}
-
-export function setApiKey(key: string): void {
-  Cookies.set('cbb_api_key', key, { expires: 7, sameSite: 'strict' })
-}
-
-export function clearApiKey(): void {
-  Cookies.remove('cbb_api_key')
-}
 
 async function apiFetch<T>(path: string, options?: RequestInit, timeoutMs: number = 30000): Promise<T> {
   const controller = new AbortController()
@@ -72,13 +71,22 @@ async function apiFetch<T>(path: string, options?: RequestInit, timeoutMs: numbe
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': getApiKey(),
+        'X-API-Key': authGetApiKey(),
         ...options?.headers,
       },
     })
     clearTimeout(timeoutId)
 
     if (!res.ok) {
+      // Handle 401 Unauthorized — clear invalid key and redirect to login
+      if (res.status === 401 && typeof window !== 'undefined') {
+        authClearApiKey()
+        const currentPath = window.location.pathname + window.location.search
+        const loginUrl = `/login?redirect=${encodeURIComponent(currentPath)}`
+        window.location.href = loginUrl
+        throw new Error('Unauthorized — redirecting to login')
+      }
+
       let detail = ''
       try {
         const body = await res.json()

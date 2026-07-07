@@ -1036,6 +1036,7 @@ class YahooFantasyClient:
             logger.warning("_enrich_ownership_batch: Invalid league key format: %s", league_key)
             return
 
+        enriched_count = 0
         try:
             for i in range(0, len(player_keys), 25):
                 chunk_keys = player_keys[i : i + 25]
@@ -1044,18 +1045,32 @@ class YahooFantasyClient:
                 # Use league-scoped endpoint - REQUIRED for ownership data
                 own_data = self._get(f"league/{league_key}/players;player_keys={keys_str}/ownership")
 
+                # DIAGNOSTIC: Log first chunk response for debugging
+                if i == 0:
+                    logger.debug("_enrich_ownership_batch: First chunk response keys: %s", list(own_data.keys()))
+                    logger.debug("_enrich_ownership_batch: fantasy_content keys: %s", list(own_data.get("fantasy_content", {}).keys()))
+
                 # League-scoped response structure: fantasy_content.league[1].players
                 fc = own_data.get("fantasy_content", {})
                 league_block = fc.get("league", [])
                 if not isinstance(league_block, list):
                     league_block = [league_block]
 
+                # DIAGNOSTIC: Log structure for first chunk
+                if i == 0:
+                    logger.debug("_enrich_ownership_batch: league_block type=%s, len=%s", type(league_block), len(league_block) if isinstance(league_block, list) else "N/A")
+
+                matched_count = 0
                 for league_entry in league_block:
                     if not isinstance(league_entry, dict):
                         continue
                     players_block = league_entry.get("players", {})
                     if not isinstance(players_block, dict):
                         continue
+
+                    # DIAGNOSTIC: Log players_block structure for first chunk
+                    if i == 0 and matched_count == 0:
+                        logger.debug("_enrich_ownership_batch: players_block type=%s, keys=%s", type(players_block), list(players_block.keys())[:5])
 
                     for raw_entry in players_block.values():
                         if not isinstance(raw_entry, dict):
@@ -1084,7 +1099,14 @@ class YahooFantasyClient:
                             for p in players:
                                 if p.get("player_key") == pk:
                                     p["percent_owned"] = pct
+                                    enriched_count += 1
 
+            # DIAGNOSTIC: Log enrichment count for this chunk
+            if enriched_count > 0:
+                logger.debug("_enrich_ownership_batch: Enriched %d players in chunk %d", enriched_count, i // 25 + 1)
+
+        # DIAGNOSTIC: Log total enrichment count
+        logger.info("_enrich_ownership_batch: Total enriched %d/%d players", enriched_count, len(player_keys))
         except Exception as exc:
             logger.warning("_enrich_ownership_batch failed (non-fatal): %s", exc)
 
