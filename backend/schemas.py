@@ -482,6 +482,12 @@ class WaiverPlayerOut(BaseModel):
     projection_source: Optional[str] = None        # "steamer+statcast" | "steamer" | "draft_board" | "proxy"
     last_updated: Optional[datetime] = None       # Loop 28: When ownership% was last refreshed
 
+    @computed_field
+    @property
+    def owned_pct(self) -> float:
+        """Backward-compatible ownership alias for older frontend/tests."""
+        return self.percent_owned
+
     @field_validator("need_score", "z_score", "percent_owned", "projected_saves", mode="before")
     @classmethod
     def default_floats(cls, v):

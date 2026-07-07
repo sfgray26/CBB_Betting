@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from backend.services.config_service import get_threshold as _get_threshold
-from backend.services.category_comparator import CATEGORY_DIRECTIONS
-
 try:
     from backend.fantasy_baseball.team_context import TeamContext as _TeamContext
 except ImportError:
@@ -65,17 +63,8 @@ MARGINAL_RATE_FIELDS: dict[str, tuple[str, str]] = {
 class CategoryNeedVector:
     """Team's current per-category deficits against this week's opponent.
 
-    IMPORTANT: deficit sign convention depends on category direction from compare_category():
-      - Higher-is-better (HR, RBI, etc.): deficit = my_val - opp_val
-        → team LOSING = negative deficit (my < opp)
-        → team WINNING = positive deficit (my > opp)
-      - Lower-is-better (ERA, WHIP): deficit = my_val - opp_val
-        → team LOSING = positive deficit (my > opp)
-        → team WINNING = negative deficit (my < opp)
-
-    The score_fa_against_needs() function NORMALIZES this based on CATEGORY_DIRECTIONS
-    so that positive normalized_deficit ALWAYS means "team needs help" regardless of
-    category direction.
+    Positive values mean the team needs help in that category. Negative values
+    mean the team is already ahead/protected.
     """
     needs: Dict[str, float]
 
@@ -97,16 +86,13 @@ def score_fa_against_needs(
 ) -> float:
     """Compute a scalar score for a FA against the team's current needs.
 
-    Normalizes deficit based on category direction so that positive deficit
-    ALWAYS means "team needs help" regardless of whether higher or lower is better.
+    Positive deficit values mean "team needs help" for all categories.
 
     Scoring rules per category:
 
     Deficit normalization:
-        - For higher-is-better categories (HR, RBI, etc.): team losing means deficit < 0
-          → flip sign to make it positive (team needs help)
-        - For lower-is-better categories (ERA, WHIP): team losing means deficit > 0
-          → keep as positive (team needs help)
+        - deficit > 0: team needs help
+        - deficit <= 0: team is tied/ahead; no positive counting-stat reward
 
     Counting stats (not in RATE_STAT_CATS):
         contribution = player_z * normalized_deficit (if normalized_deficit > 0)
@@ -115,8 +101,7 @@ def score_fa_against_needs(
 
     Rate stats (in RATE_STAT_CATS):
         Penalty path (team WINNING heavily AND player hurts category):
-            - For higher-is-better: deficit > THRESHOLD (team winning) AND player_z < 0
-            - For lower-is-better: deficit < -THRESHOLD (team winning) AND player_z < 0
+            - deficit < -THRESHOLD (team winning/protected) AND player_z < 0
             → contribution = player_z * |deficit| * RATE_STAT_PENALTY_MULTIPLIER (NEGATIVE score)
         Normal path (team losing OR player helps):
             → contribution = player_z * normalized_deficit
@@ -130,39 +115,20 @@ def score_fa_against_needs(
         if player_z == 0.0 and cat not in fa_impact.impacts:
             continue
 
-        # Get category direction (higher or lower is better)
-        direction = CATEGORY_DIRECTIONS.get(cat.upper(), "higher")
-
         if cat in RATE_STAT_CATS:
             # Rate stat protection gate: penalize players who hurt categories team is WINNING
-            team_is_winning_heavily = False
-            if direction == "higher":
-                # For higher-is-better: deficit > threshold means team winning heavily
-                team_is_winning_heavily = deficit > RATE_STAT_PROTECT_THRESHOLD
-            else:  # "lower"
-                # For lower-is-better: deficit < -threshold means team winning heavily
-                team_is_winning_heavily = deficit < -RATE_STAT_PROTECT_THRESHOLD
+            team_is_winning_heavily = deficit < -RATE_STAT_PROTECT_THRESHOLD
 
             if team_is_winning_heavily and player_z < 0.0:
                 # Penalty gate fires: player damages a category the team leads heavily
                 total += player_z * abs(deficit) * RATE_STAT_PENALTY_MULTIPLIER
             else:
-                # Normal path: normalize deficit and score
-                if direction == "higher":
-                    # Team losing means deficit < 0, flip to positive
-                    normalized_deficit = -deficit if deficit < 0 else 0.0
-                else:  # "lower"
-                    # Team losing means deficit > 0, keep as positive
-                    normalized_deficit = deficit if deficit > 0 else 0.0
+                # Normal path: positive deficit means team needs help
+                normalized_deficit = deficit if deficit > 0 else 0.0
                 total += player_z * normalized_deficit
         else:
-            # Counting stats: normalize deficit and score only if team needs help
-            if direction == "higher":
-                # For higher-is-better: team losing means deficit < 0, flip to positive
-                normalized_deficit = -deficit if deficit < 0 else 0.0
-            else:  # "lower"
-                # For lower-is-better: team losing means deficit > 0, keep as positive
-                normalized_deficit = deficit if deficit > 0 else 0.0
+            # Counting stats: positive deficit means team needs help
+            normalized_deficit = deficit if deficit > 0 else 0.0
 
             # Only positive player_z contributes (negative doesn't hurt for counting stats)
             total += max(0.0, player_z) * normalized_deficit

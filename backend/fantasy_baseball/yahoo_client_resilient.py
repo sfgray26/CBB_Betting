@@ -1050,7 +1050,10 @@ class YahooFantasyClient:
                     logger.debug("_enrich_ownership_batch: First chunk response keys: %s", list(own_data.keys()))
                     logger.debug("_enrich_ownership_batch: fantasy_content keys: %s", list(own_data.get("fantasy_content", {}).keys()))
 
-                # League-scoped response structure: fantasy_content.league[1].players
+                # League-scoped response structure is usually:
+                # fantasy_content.league[1].players
+                # Some Yahoo/test responses expose players directly at:
+                # fantasy_content.players
                 fc = own_data.get("fantasy_content", {})
                 league_block = fc.get("league", [])
                 if not isinstance(league_block, list):
@@ -1061,13 +1064,20 @@ class YahooFantasyClient:
                     logger.debug("_enrich_ownership_batch: league_block type=%s, len=%s", type(league_block), len(league_block) if isinstance(league_block, list) else "N/A")
 
                 matched_count = 0
+                players_blocks = []
+                direct_players_block = fc.get("players", {})
+                if isinstance(direct_players_block, dict):
+                    players_blocks.append(direct_players_block)
+
                 for league_entry in league_block:
                     if not isinstance(league_entry, dict):
                         continue
                     players_block = league_entry.get("players", {})
                     if not isinstance(players_block, dict):
                         continue
+                    players_blocks.append(players_block)
 
+                for players_block in players_blocks:
                     # DIAGNOSTIC: Log players_block structure for first chunk
                     if i == 0 and matched_count == 0:
                         logger.debug("_enrich_ownership_batch: players_block type=%s, keys=%s", type(players_block), list(players_block.keys())[:5])
@@ -1085,21 +1095,24 @@ class YahooFantasyClient:
                             if isinstance(chunk, dict):
                                 if "player_key" in chunk:
                                     pk = chunk["player_key"]
-                                own = chunk.get("ownership", {})
-                                # FIX: Process ownership even if dict is empty (0% ownership is valid)
-                                # League context uses percent_rostered (not percent_owned)
-                                pct_block = own.get("percent_rostered", {})
-                                if isinstance(pct_block, dict):
-                                    pct = self._safe_float(pct_block.get("value", 0), 0.0)
-                                elif pct_block is not None:
-                                    pct = self._safe_float(pct_block, 0.0)
+                                if "ownership" in chunk:
+                                    own = chunk.get("ownership") or {}
+                                    # FIX: Process ownership even when value is 0
+                                    # League context uses percent_rostered (not percent_owned)
+                                    pct_block = own.get("percent_rostered", {})
+                                    if isinstance(pct_block, dict):
+                                        pct = self._safe_float(pct_block.get("value", 0), 0.0)
+                                    elif pct_block is not None:
+                                        pct = self._safe_float(pct_block, 0.0)
 
                         if pk and pct is not None:
                             # Update even if pct = 0.0 (zero ownership is valid data)
                             for p in players:
-                                if p.get("player_key") == pk:
+                                existing_pct = p.get("percent_owned")
+                                if p.get("player_key") == pk and existing_pct in (None, 0, 0.0):
                                     p["percent_owned"] = pct
                                     enriched_count += 1
+                                    matched_count += 1
 
             # DIAGNOSTIC: Log enrichment count for this chunk
             if enriched_count > 0:
