@@ -38,11 +38,11 @@ def test_workaround(player_name: str, yahoo_key: str, corrupted_bdl_id: int):
     print(f"\nStep 1: Scores under corrupted BDL ID {corrupted_bdl_id}?")
     if score_corrupted:
         print(f"  YES - score={score_corrupted.score_0_100}, date={score_corrupted.as_of_date}")
-        print(f"  -> Workaround not needed")
+        print("  -> Workaround not needed")
         db.close()
         return True
     else:
-        print(f"  NO - trigger workaround")
+        print("  NO - trigger workaround")
 
     # Step 2: Find mlbam_id for this player
     mapping = db.query(PlayerIDMapping).filter(
@@ -75,13 +75,13 @@ def test_workaround(player_name: str, yahoo_key: str, corrupted_bdl_id: int):
 
         if alt_score:
             print(f"    -> HAS scores! score={alt_score.score_0_100}, date={alt_score.as_of_date}")
-            print(f"  *** WORKAROUND WOULD WORK ***")
+            print("  *** WORKAROUND WOULD WORK ***")
             db.close()
             return True
         else:
-            print(f"    -> No scores")
+            print("    -> No scores")
 
-    print(f"  *** WORKAROUND FAILED - No scores found for any alternative BDL ID ***")
+    print("  *** WORKAROUND FAILED - No scores found for any alternative BDL ID ***")
     db.close()
     return False
 
@@ -115,7 +115,7 @@ def main():
     print(f"\nTotal: {working}/{len(results)} workarounds successful")
 
     if working == len(results):
-        print(f"\n*** ALL WORKAROUNDS SUCCESSFUL ***")
+        print("\n*** ALL WORKAROUNDS SUCCESSFUL ***")
 
 
 if __name__ == "__main__":

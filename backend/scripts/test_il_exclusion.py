@@ -46,10 +46,10 @@ def test_optimizer():
     print("\n2. Checking IL exclusion message...")
     message = data.get('message', '')
     if 'IL' in message and 'excluded' in message.lower():
-        print(f"   [OK] IL exclusion mentioned in message")
+        print("   [OK] IL exclusion mentioned in message")
         print(f"   Message: {message}")
     else:
-        print(f"   Note: IL exclusion not explicitly mentioned")
+        print("   Note: IL exclusion not explicitly mentioned")
 
     # Analyze starters
     print("\n3. Analyzing active lineup...")
@@ -62,13 +62,13 @@ def test_optimizer():
     )
 
     if crochet_in_starters:
-        print(f"   [X] FAIL: Garrett Crochet found in active lineup!")
+        print("   [X] FAIL: Garrett Crochet found in active lineup!")
         for starter in starters:
             if 'Crochet' in starter.get('name', ''):
                 print(f"      - {starter.get('name')} in {starter.get('slot')} slot")
         return False
     else:
-        print(f"   [OK] PASS: Garrett Crochet NOT in active lineup")
+        print("   [OK] PASS: Garrett Crochet NOT in active lineup")
 
     # Check UTIL position eligibility
     print("\n4. Checking UTIL position eligibility...")
@@ -101,7 +101,7 @@ def test_optimizer():
             print(f"   [OK] {name} in UTIL - positions: {positions}")
 
     if all_valid:
-        print(f"   [OK] PASS: All UTIL players have hitting positions")
+        print("   [OK] PASS: All UTIL players have hitting positions")
 
     # Check for any IL players in active slots
     print("\n5. Checking for IL players in active slots...")
@@ -125,12 +125,12 @@ def test_optimizer():
                 break
 
     if il_in_active:
-        print(f"   [X] FAIL: Found IL players in active slots:")
+        print("   [X] FAIL: Found IL players in active slots:")
         for player in il_in_active:
             print(f"      - {player['name']} ({player['slot']}): {player['status']} - {player['note']}")
         return False
     else:
-        print(f"   [OK] PASS: No IL players in active slots")
+        print("   [OK] PASS: No IL players in active slots")
 
     # Summary
     print("\n" + "=" * 70)

@@ -57,7 +57,13 @@ import {
 } from '@/lib/auth'
 
 // Re-export for external consumers
-export { getApiKey as authGetApiKey as getApiKey, setApiKey as authSetApiKey as setApiKey, clearApiKey as authClearApiKey as clearApiKey, isAuthenticated, getRedirectUrl }
+export {
+  authGetApiKey as getApiKey,
+  authSetApiKey as setApiKey,
+  authClearApiKey as clearApiKey,
+  isAuthenticated,
+  getRedirectUrl,
+}
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 

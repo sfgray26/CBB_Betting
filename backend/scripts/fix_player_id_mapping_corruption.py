@@ -43,7 +43,7 @@ def fix_corrupted_mapping(db, player_name: str, yahoo_key: str, correct_bdl_id: 
         db.commit()
         print(f"  DELETED row id={wrong_row.id}")
     else:
-        print(f"Step 1: No wrong row found (may already be fixed)")
+        print("Step 1: No wrong row found (may already be fixed)")
 
     # Step 2: Find the correct row and UPDATE it to add yahoo_key
     correct_row = db.query(PlayerIDMapping).filter(
@@ -147,12 +147,12 @@ def main():
         # FIX 5: Jordan Walker - need to add yahoo_key for bdl_id=539
         # Need to find his yahoo_key first - skip for now
         print(f"\n{'='*60}")
-        print(f"SKIPPED: Jordan Walker (bdl_id=539) - needs yahoo_key discovery")
+        print("SKIPPED: Jordan Walker (bdl_id=539) - needs yahoo_key discovery")
         print(f"{'='*60}")
 
         # FIX 6-7: Edwin Díaz and Cristopher Sánchez - need full mapping
         print(f"\n{'='*60}")
-        print(f"SKIPPED: Edwin Díaz and Cristopher Sánchez - need Yahoo API lookup")
+        print("SKIPPED: Edwin Díaz and Cristopher Sánchez - need Yahoo API lookup")
         print(f"{'='*60}")
 
         print(f"\n{'='*60}")

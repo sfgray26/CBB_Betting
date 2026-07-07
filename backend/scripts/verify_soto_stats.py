@@ -25,7 +25,7 @@ def main():
 
     print(f"\nFound {len(mappings)} Juan Soto mappings:")
     for m in mappings:
-        print(f"\n  Mapping:")
+        print("\n  Mapping:")
         print(f"    full_name: {m.full_name}")
         print(f"    yahoo_key: {m.yahoo_key}")
         print(f"    bdl_id: {m.bdl_id}")
@@ -46,7 +46,7 @@ def main():
                 print(f"    Recent stats: AB={latest.ab}, H={latest.hits}, HR={latest.home_runs}")
 
     # Check if ANY stats exist for Juan Soto by name in raw_payload
-    print(f"\n" + "="*60)
+    print("\n" + "="*60)
     print("Checking raw_payload for 'Soto' mentions...")
     result = db.execute(text("""
         SELECT bdl_player_id, COUNT(*) as cnt

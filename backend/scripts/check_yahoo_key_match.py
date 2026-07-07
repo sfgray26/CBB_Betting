@@ -27,7 +27,7 @@ def check_yahoo_key_resolution(player_name: str):
 
     print(f"\nFound {len(mappings)} mappings with similar name:")
     for m in mappings:
-        print(f"\n  Mapping:")
+        print("\n  Mapping:")
         print(f"    full_name: {m.full_name}")
         print(f"    normalized_name: {m.normalized_name}")
         print(f"    yahoo_key: {m.yahoo_key}")
@@ -40,13 +40,13 @@ def check_yahoo_key_resolution(player_name: str):
             PlayerScore.bdl_player_id == m.bdl_id
         ).order_by(PlayerScore.as_of_date.desc()).limit(3).all()
 
-        print(f"    Scores (last 3):")
+        print("    Scores (last 3):")
         for s in scores:
             print(f"      {s.as_of_date}: score_0_100={s.score_0_100}, composite_z={s.composite_z:.2f}")
 
     # Check what yahoo_key variants the optimizer would look for
     # (This simulates _yahoo_key_variants function)
-    print(f"\n" + "="*60)
+    print("\n" + "="*60)
     print("Yahoo key variants that would be searched:")
     yahoo_keys = [m.yahoo_key for m in mappings if m.yahoo_key]
     for yk in yahoo_keys:

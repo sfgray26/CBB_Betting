@@ -33,7 +33,7 @@ def check_jordan_walker(db):
     ).first()
 
     if bdl_539:
-        print(f"\nFound mapping with bdl_id=539:")
+        print("\nFound mapping with bdl_id=539:")
         print(f"  id={bdl_539.id}, full_name={bdl_539.full_name}")
         print(f"  yahoo_key={bdl_539.yahoo_key}")
 
@@ -188,7 +188,7 @@ def main():
         # Check current status
         walker_status = check_jordan_walker(db)
         sanchez_status = check_cristopher_sanchez(db)
-        diaz_status = check_edwin_diaz(db)
+        check_edwin_diaz(db)
 
         # Try to discover yahoo keys
         yahoo_players = discover_yahoo_keys_from_yahoo(db)
@@ -215,7 +215,7 @@ def main():
                 db.commit()
                 print(f"  UPDATED: Added yahoo_key={yahoo_key} to row id={row.id}")
             else:
-                print(f"  ERROR: No row with bdl_id=539 found")
+                print("  ERROR: No row with bdl_id=539 found")
 
         # Cristopher Sánchez
         if "Cristopher Sánchez" in yahoo_players and sanchez_status != "OK":
@@ -235,21 +235,21 @@ def main():
                 db.commit()
                 print(f"  UPDATED: Added yahoo_key={yahoo_key} to existing row id={row.id}")
             else:
-                print(f"  ERROR: No existing row found - need to create new mapping (requires bdl_id)")
+                print("  ERROR: No existing row found - need to create new mapping (requires bdl_id)")
 
         # Edwin Díaz
         if "Edwin Díaz" in yahoo_players:
             yahoo_key = yahoo_players["Edwin Díaz"]["player_key"]
             status = yahoo_players["Edwin Díaz"]["status"]
-            print(f"\nEdwin Díaz found on Yahoo:")
+            print("\nEdwin Díaz found on Yahoo:")
             print(f"  Yahoo Key: {yahoo_key}")
             print(f"  Status: {status}")
 
             if status and "il" in status.lower():
-                print(f"  *** CONFIRMED: Edwin Díaz is IL - should be excluded from optimizer ***")
+                print("  *** CONFIRMED: Edwin Díaz is IL - should be excluded from optimizer ***")
             else:
                 print(f"  *** WARNING: Edwin Díaz status is '{status}' - not IL! ***")
-                print(f"  *** May need mapping if he's active ***")
+                print("  *** May need mapping if he's active ***")
 
     finally:
         db.close()

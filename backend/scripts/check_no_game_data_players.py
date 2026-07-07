@@ -37,7 +37,7 @@ def main():
 
         print(f"Found {len(mappings)} mappings:")
         for m in mappings:
-            print(f"\n  Mapping:")
+            print("\n  Mapping:")
             print(f"    full_name: {m.full_name}")
             print(f"    yahoo_key: {m.yahoo_key}")
             print(f"    bdl_id: {m.bdl_id}")

@@ -661,8 +661,6 @@ def generate_pool_optimal_bracket(
 
 if __name__ == "__main__":
     # Test with sample matchup
-    from backend.tournament.matchup_predictor import TournamentTeam
-    
     vanderbilt = TournamentTeam(
         name="Vanderbilt", seed=5, region="south",
         composite_rating=13.0, kp_adj_em=13.3, bt_adj_em=12.6,

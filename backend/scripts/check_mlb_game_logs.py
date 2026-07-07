@@ -52,15 +52,15 @@ def check_player_game_log(db, player_name: str, bdl_id: int, mlbam_id: int):
                 print(f"  Latest as_of: {latest.as_of_date}, window={latest.window_days}d")
 
     # Diagnosis
-    print(f"\nDiagnosis:")
+    print("\nDiagnosis:")
     if stats_count == 0:
-        print(f"  -> NO game data - player likely in minors or hasn't played")
+        print("  -> NO game data - player likely in minors or hasn't played")
         return "NO_GAME_DATA"
     elif rolling_count == 0:
-        print(f"  -> HAS game logs but NO rolling stats - ingestion pipeline failure")
+        print("  -> HAS game logs but NO rolling stats - ingestion pipeline failure")
         return "INGESTION_FAILURE"
     else:
-        print(f"  -> HAS both game logs and rolling stats")
+        print("  -> HAS both game logs and rolling stats")
         return "HAS_DATA"
 
 
@@ -80,7 +80,7 @@ def main():
         print("="*60)
 
         for name, bdl_id, mlbam_id in players:
-            diagnosis = check_player_game_log(db, name, bdl_id, mlbam_id)
+            check_player_game_log(db, name, bdl_id, mlbam_id)
 
     finally:
         db.close()

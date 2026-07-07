@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 import pandas as pd
-from sqlalchemy import text, func, or_
+from sqlalchemy import text, func, or_, update as pg_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler

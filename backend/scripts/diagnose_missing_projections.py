@@ -54,11 +54,11 @@ def check_player(db, player_name: str, yahoo_key: str = None) -> dict:
             result["in_mapping"] = True
             result["bdl_id"] = mapping.bdl_id
             result["mlbam_id"] = mapping.mlbam_id
-            print(f"[OK] Found in PlayerIDMapping")
+            print("[OK] Found in PlayerIDMapping")
             print(f"  BDL ID: {mapping.bdl_id}")
             print(f"  MLBAM ID: {mapping.mlbam_id}")
         else:
-            print(f"[MISS] NOT in PlayerIDMapping table")
+            print("[MISS] NOT in PlayerIDMapping table")
             result["root_cause"] = "MISSING_MAPPING"
             return result
     else:
@@ -71,12 +71,12 @@ def check_player(db, player_name: str, yahoo_key: str = None) -> dict:
             result["in_mapping"] = True
             result["bdl_id"] = mapping.bdl_id
             result["mlbam_id"] = mapping.mlbam_id
-            print(f"[OK] Found in PlayerIDMapping (by name)")
+            print("[OK] Found in PlayerIDMapping (by name)")
             print(f"  Yahoo Key: {mapping.yahoo_key}")
             print(f"  BDL ID: {mapping.bdl_id}")
             print(f"  MLBAM ID: {mapping.mlbam_id}")
         else:
-            print(f"[MISS] NOT in PlayerIDMapping table (no yahoo_key provided, name search failed)")
+            print("[MISS] NOT in PlayerIDMapping table (no yahoo_key provided, name search failed)")
             result["root_cause"] = "MISSING_MAPPING"
             return result
 
@@ -90,11 +90,11 @@ def check_player(db, player_name: str, yahoo_key: str = None) -> dict:
             result["in_scores"] = True
             result["latest_score_date"] = str(scores.as_of_date)
             result["latest_score_value"] = scores.score_0_100
-            print(f"[OK] Found in player_scores")
+            print("[OK] Found in player_scores")
             print(f"  Latest date: {scores.as_of_date}")
             print(f"  Score: {scores.score_0_100}")
         else:
-            print(f"[MISS] NOT in player_scores table")
+            print("[MISS] NOT in player_scores table")
             result["root_cause"] = "MISSING_SCORE"
 
     # Step 3: Check player_rolling_stats
@@ -108,7 +108,7 @@ def check_player(db, player_name: str, yahoo_key: str = None) -> dict:
             result["in_rolling_stats"] = True
             print(f"[OK] Found in player_rolling_stats ({rolling} rows)")
         else:
-            print(f"[MISS] NOT in player_rolling_stats table")
+            print("[MISS] NOT in player_rolling_stats table")
             if result["root_cause"] == "UNKNOWN":
                 result["root_cause"] = "MISSING_ROLLING_STATS"
 

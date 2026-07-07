@@ -4610,7 +4610,6 @@ async def bulk_apply_roster_moves(
 
     # Phase 5: Map generic "OF" to specific Yahoo positions (LF/CF/RF)
     # Yahoo requires specific outfield positions, not generic "OF"
-    move_map = {m.player_key: m.target_position for m in request.moves}
     mapped_moves = {}
     for move in request.moves:
         target_pos = move.target_position
@@ -5246,7 +5245,7 @@ async def optimize_roster(
                 f"Insufficient projection data — {len(real_projection_players)} of {active_slots_count} "
                 f"players have real projections. Cannot optimize reliably. "
                 f"{missing_count} player(s) missing projection data: {', '.join(fallback_players[:5])}"
-                + (f"..." if len(fallback_players) > 5 else "")
+                + ("..." if len(fallback_players) > 5 else "")
             ),
             target_date=target_date,
             starters=[],
@@ -5670,7 +5669,6 @@ def _format_lineup_lock_message() -> str:
     """Return user-friendly message for lineup lock errors."""
     now_et = datetime.now(ZoneInfo("America/New_York"))
     hour = now_et.hour
-    minute = now_et.minute
 
     # Determine if we're in typical game window
     if 12 <= hour < 23:  # Noon to 11 PM ET
