@@ -4424,6 +4424,22 @@ async def move_roster_player(
         ))
     except YahooAPIError as exc:
         logger.error("roster/move: Yahoo API error - %s", exc)
+        # Check if this is a lineup lock error and provide user-friendly message
+        if _is_lineup_lock_error(str(exc)):
+            return _cors_response(RosterMoveResponse(
+                success=False,
+                player_key=request.player_key,
+                from_position=from_position,
+                to_position=target_position,
+                message=_format_lineup_lock_message(),
+                freshness=FreshnessMetadata(
+                    primary_source="yahoo",
+                    fetched_at=None,
+                    computed_at=now_et,
+                    staleness_threshold_minutes=60,
+                    is_stale=False,
+                ),
+            ))
         return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
@@ -4631,6 +4647,12 @@ async def bulk_apply_roster_moves(
     try:
         result = client.set_lineup(team_key=team_key, lineup=lineup)
     except YahooAPIError as exc:
+        # Check if this is a lineup lock error and provide user-friendly message
+        if _is_lineup_lock_error(str(exc)):
+            raise HTTPException(
+                status_code=403,  # 403 Forbidden is more appropriate than 502 for lineup locks
+                detail={"errors": [_format_lineup_lock_message()]}
+            ) from exc
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     applied = set(result.get("applied", []))
@@ -5596,6 +5618,56 @@ def _map_of_position(eligible_positions, player_name) -> str:
     )
 
 
+def _is_lineup_lock_error(error_message: str) -> bool:
+    """Check if error message indicates Yahoo lineup is locked.
+
+    Yahoo locks lineups when games have started or are about to start.
+    Common error phrases:
+    - "not editable"
+    - "lineup is locked"
+    - "roster is frozen"
+    - "edits are not allowed"
+
+    Returns:
+        True if error indicates lineup lock, False otherwise.
+    """
+    if not error_message:
+        return False
+
+    error_lower = error_message.lower()
+    lock_phrases = [
+        "not editable",
+        "lineup is locked",
+        "roster is frozen",
+        "edits are not allowed",
+        "cannot edit",
+        "lineup locked",
+        "roster locked",
+    ]
+
+    return any(phrase in error_lower for phrase in lock_phrases)
+
+
+def _format_lineup_lock_message() -> str:
+    """Return user-friendly message for lineup lock errors."""
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    hour = now_et.hour
+    minute = now_et.minute
+
+    # Determine if we're in typical game window
+    if 12 <= hour < 23:  # Noon to 11 PM ET
+        return (
+            "Lineup is locked — games have started or are about to start. "
+            "Lineup changes can be made tomorrow before the first pitch "
+            "(typically before 12:35 PM ET on weekdays, 1:05 PM ET on weekends)."
+        )
+    else:  # Early morning or late night
+        return (
+            "Lineup is currently locked. Changes may be available closer to game time "
+            "or tomorrow before the first pitch."
+        )
+
+
 @router.get("/api/fantasy/players/valuations")
 async def get_player_valuations(
     date_str: Optional[str] = Query(None, alias="date"),
@@ -6233,6 +6305,69 @@ async def yahoo_health():
         health_status["error"] = f"API check failed: {str(exc)}"
 
     return health_status
+
+
+@router.get("/api/fantasy/lineup-editable")
+async def lineup_editable():
+    """
+    Check if Yahoo lineup is currently editable (not locked).
+
+    Returns line edit status and user-friendly message if locked.
+    Frontend can use this to disable the 'Apply All' button during lock periods.
+    """
+    from backend.fantasy_baseball.yahoo_client_resilient import get_yahoo_client
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+
+    editable_status = {
+        "editable": True,  # Default to editable
+        "message": None,
+        "checked_at": now_et.strftime("%Y-%m-%d %H:%M:%S ET"),
+    }
+
+    try:
+        client = get_yahoo_client()
+        team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+        # Try a minimal lineup operation to test editability
+        # We'll fetch the roster and check if we can detect lock status
+        roster = client.get_roster(team_key=team_key)
+
+        # Check if any active players have game flags indicating games are in progress
+        # Yahoo typically sets status or flags when games are active
+        for player in roster:
+            status = player.get("status", "").upper()
+            # If players have "ACTIVE" status or game flags, games may be in progress
+            # This is a heuristic - definitive check requires attempting a lineup change
+            if status in ("ACTIVE", "PLAYING", "IN PROGRESS"):
+                # Games likely in progress, lineup may be locked
+                editable_status["editable"] = False
+                editable_status["message"] = _format_lineup_lock_message()
+                logger.info("lineup_editable: Detected games in progress - player %s has status %s",
+                           player.get("name", "unknown"), status)
+                break
+
+        # Additional check: time-based heuristic
+        # If it's during typical game hours (12 PM - 11 PM ET), flag as potentially locked
+        hour = now_et.hour
+        if 12 <= hour < 23:
+            # During game hours, show warning message but don't block
+            editable_status["message"] = (
+                "Note: During game hours (12 PM - 11 PM ET), lineups may be locked. "
+                "For best results, set lineups before first pitch."
+            )
+
+    except YahooAuthError as exc:
+        editable_status["editable"] = False
+        editable_status["message"] = f"Yahoo authentication failed: {str(exc)}"
+    except Exception as exc:
+        # If we can't check, assume editable but log the error
+        logger.warning("lineup_editable: Check failed - %s", exc)
+        editable_status["message"] = f"Unable to verify lineup status: {str(exc)}"
+
+    return editable_status
 
 
 @router.get("/api/fantasy/global-freshness")
