@@ -5298,11 +5298,12 @@ async def optimize_roster(
             "SAFETY CHECK FAILED: IL players in active slots: %s",
             ", ".join([f"{p['name']} ({p['slot']})" for p in il_players_in_lineup])
         )
+        player_list = ', '.join([f'{p["name"]} ({p["slot"]})' for p in il_players_in_lineup])
         return RosterOptimizeResponse(
             success=False,
             message=(
                 f"Safety check failed: {len(il_players_in_lineup)} IL player(s) in active lineup. "
-                f"Players: {', '.join([f\"{p['name']} ({p['slot']})\" for p in il_players_in_lineup])}. "
+                f"Players: {player_list}. "
                 f"IL players cannot be placed in active slots."
             ),
             target_date=target_date,
@@ -5438,7 +5439,8 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
         # Check for injury keywords
         for keyword in INJURY_KEYWORDS:
             import re
-            if re.search(rf"\b{keyword}\b", text_upper):
+            pattern = r"\b" + keyword + r"\b"
+            if re.search(pattern, text_upper):
                 return True
 
         return False
