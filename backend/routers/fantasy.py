@@ -5090,11 +5090,14 @@ async def optimize_roster(
     for p in player_data:
         if p["player_key"] in _norm_map:
             p["lineup_score"] = _norm_map[p["player_key"]]
+
+    # Split into hitters and pitchers based on eligible_positions
+    # Players with NO positions go to neither group → will be assigned to bench
     hitter_data = [
         p for p in player_data
-        if not (
+        if (
             bool(p.get("eligible_positions"))
-            and {pos.upper() for pos in p["eligible_positions"]}.issubset(_PITCHER_POSITIONS_SET)
+            and not {pos.upper() for pos in p["eligible_positions"]}.issubset(_PITCHER_POSITIONS_SET)
         )
     ]
     pitcher_data = [
@@ -5274,6 +5277,49 @@ async def optimize_roster(
             ", ".join([f"{p['name']} ({p['ownership']}% owned)" for p in fallback_players])
         )
 
+    # POST-OPTIMIZATION SAFETY CHECK: Reject lineups with IL players in active slots
+    # This catches any IL detection misses and prevents dangerous lineups
+    il_players_in_lineup = []
+    for assignment in starters:
+        player_key = assignment.player_key
+        player = next((p for p in player_data if p["player_key"] == player_key), None)
+        if player:
+            injury_overlay = injury_overlays.get(player_key)
+            if _is_il_designated(player, injury_overlay):
+                il_players_in_lineup.append({
+                    "name": player.get("name", "Unknown"),
+                    "slot": assignment.assigned_slot,
+                    "status": player.get("status", ""),
+                    "injury_note": player.get("injury_note", ""),
+                })
+
+    if il_players_in_lineup:
+        logger.error(
+            "SAFETY CHECK FAILED: IL players in active slots: %s",
+            ", ".join([f"{p['name']} ({p['slot']})" for p in il_players_in_lineup])
+        )
+        return RosterOptimizeResponse(
+            success=False,
+            message=(
+                f"Safety check failed: {len(il_players_in_lineup)} IL player(s) in active lineup. "
+                f"Players: {', '.join([f\"{p['name']} ({p['slot']})\" for p in il_players_in_lineup])}. "
+                f"IL players cannot be placed in active slots."
+            ),
+            target_date=target_date,
+            starters=[],
+            bench=[],
+            unrostered=[p["player_key"] for p in player_data],
+            total_lineup_score=0.0,
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+            schedule_available=schedule_available,
+        )
+
     return RosterOptimizeResponse(
         success=True,
         message=base_msg,
@@ -5314,7 +5360,8 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
     3. injury_overlay.status - DB injury overlay (60-Day IL, 15-Day IL, etc.)
 
     Matches: "IL", "IL10", "IL15", "IL60", "10-Day IL", "15-Day IL", "60-Day IL",
-             "NA", "OUT", "BEREAVEMENT", "DTD", "DL".
+             "NA", "OUT", "BEREAVEMENT", "DTD", "DL", AND injury body parts
+             (Shoulder, Elbow, Knee, Back, etc. - any non-Day-to-Day injury excludes player).
 
     IMPORTANT: Does NOT match position names like "Util" (contains "il" but is a position).
     Does NOT match team names containing "IL" (e.g., "IL" in "Philadelphia").
@@ -5329,7 +5376,18 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
         "10-DAY", "15-DAY", "60-DAY", "10DAY", "15DAY", "60DAY",
         "10 DAY", "15 DAY", "60 DAY",
         "DL", "DL10", "DL15", "DL60", "DL-10", "DL-15", "DL-60",
-        "NA", "OUT", "BEREAVEMENT", "DTD", "SUSPENDED",
+        "NA", "OUT", "BEREAVEMENT", "DTD", "SUSPENDED", "OBSERVATION",
+    })
+
+    # Body parts and general injury terms that indicate IL (not Day-to-Day)
+    # Any injury description containing these WITHOUT "Day-to-Day" excludes the player
+    INJURY_KEYWORDS = frozenset({
+        "SHOULDER", "ELBOW", "KNEE", "BACK", "WRIST", "HIP", "ANKLE", "FOOT",
+        "HAND", "FINGER", "THUMB", "QUAD", "HAMSTRING", "GROIN", "CALF", "ACHILLES",
+        "ROTATOR", "LABRUM", "MCL", "ACL", "MENISCUS", "CONCUSSION", "OBLIQUE",
+        "LAT", "OBIQUE", "FOREARM", "BICEP", "TRICEP", "TENDON", "LIGAMENT",
+        "FRACTURE", "FRACTURED", "BROKEN", "STRAIN", "SPRAIN", "TEAR",
+        "INFLAMED", "SWOLLEN", "SORENESS", "TIGHTNESS", "IMPINGEMENT",
     })
 
     # Position names that should NOT be treated as IL (contains "il" substring)
@@ -5367,21 +5425,48 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
 
         return False
 
+    def _contains_injury_term(text: str) -> bool:
+        """Check if text contains injury body part or term (excluding Day-to-Day)."""
+        if not text:
+            return False
+        text_upper = text.upper().strip()
+
+        # Day-to-Day is NOT IL - player is active
+        if "DAY TO DAY" in text_upper or "DAY-TO-DAY" in text_upper:
+            return False
+
+        # Check for injury keywords
+        for keyword in INJURY_KEYWORDS:
+            import re
+            if re.search(rf"\b{keyword}\b", text_upper):
+                return True
+
+        return False
+
     # Check 1: player["status"] (Yahoo roster slot)
     raw_status = player.get("status")
     if raw_status is not None and not isinstance(raw_status, bool):
-        if _contains_il_keyword(str(raw_status)):
+        status_str = str(raw_status)
+        if _contains_il_keyword(status_str):
+            return True
+        if _contains_injury_term(status_str):
             return True
 
     # Check 2: player["injury_note"] (Yahoo injury description)
     raw_note = player.get("injury_note")
     if raw_note is not None and not isinstance(raw_note, bool):
-        if _contains_il_keyword(str(raw_note)):
+        note_str = str(raw_note)
+        if _contains_il_keyword(note_str):
+            return True
+        if _contains_injury_term(note_str):
             return True
 
     # Check 3: injury_overlay.status (DB injury overlay)
     if injury_overlay is not None and injury_overlay.status:
-        if _contains_il_keyword(str(injury_overlay.status)):
+        overlay_str = str(injury_overlay.status)
+        if _contains_il_keyword(overlay_str):
+            return True
+        if _contains_injury_term(overlay_str):
             return True
 
     # Defensive: handle boolean status values (data corruption/API change)
