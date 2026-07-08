@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from backend.services.config_service import get_threshold as _get_threshold
+from backend.services.category_comparator import CATEGORY_DIRECTIONS
 try:
     from backend.fantasy_baseball.team_context import TeamContext as _TeamContext
 except ImportError:
@@ -63,8 +64,10 @@ MARGINAL_RATE_FIELDS: dict[str, tuple[str, str]] = {
 class CategoryNeedVector:
     """Team's current per-category deficits against this week's opponent.
 
-    Positive values mean the team needs help in that category. Negative values
-    mean the team is already ahead/protected.
+    Direct scorer convention: for higher-is-better counting categories,
+    negative values mean the team needs help and positive values mean the team
+    is ahead. For rate categories, positive values mean the team needs help and
+    negative values mean the team is ahead/protected.
     """
     needs: Dict[str, float]
 
@@ -86,13 +89,14 @@ def score_fa_against_needs(
 ) -> float:
     """Compute a scalar score for a FA against the team's current needs.
 
-    Positive deficit values mean "team needs help" for all categories.
+    Uses the direct scorer signed-vector convention documented on
+    CategoryNeedVector.
 
     Scoring rules per category:
 
     Deficit normalization:
-        - deficit > 0: team needs help
-        - deficit <= 0: team is tied/ahead; no positive counting-stat reward
+        - counting higher-is-better: deficit < 0 means team needs help
+        - rate stats: deficit > 0 means team needs help
 
     Counting stats (not in RATE_STAT_CATS):
         contribution = player_z * normalized_deficit (if normalized_deficit > 0)
@@ -123,17 +127,47 @@ def score_fa_against_needs(
                 # Penalty gate fires: player damages a category the team leads heavily
                 total += player_z * abs(deficit) * RATE_STAT_PENALTY_MULTIPLIER
             else:
-                # Normal path: positive deficit means team needs help
+                # Normal path for rate stats: positive deficit means team needs help
                 normalized_deficit = deficit if deficit > 0 else 0.0
                 total += player_z * normalized_deficit
         else:
-            # Counting stats: positive deficit means team needs help
-            normalized_deficit = deficit if deficit > 0 else 0.0
+            # Counting stats: for higher-is-better categories, negative deficit
+            # means team needs help. Lower-is-better counting stats are rare but
+            # use positive deficit as need.
+            direction = CATEGORY_DIRECTIONS.get(cat.upper(), "higher")
+            if direction == "higher":
+                normalized_deficit = -deficit if deficit < 0 else 0.0
+            else:
+                normalized_deficit = deficit if deficit > 0 else 0.0
 
             # Only positive player_z contributes (negative doesn't hurt for counting stats)
             total += max(0.0, player_z) * normalized_deficit
 
     return float(total)
+
+
+def need_magnitudes_to_signed_vector(needs: Dict[str, float]) -> Dict[str, float]:
+    """Convert positive need magnitudes into score_fa_against_needs() signs.
+
+    Several higher-level services pass simple magnitudes where positive means
+    "we need help" for every category. The core scorer uses a signed raw-vector
+    convention for direct matchup math, so counting higher-is-better categories
+    must be negated before scoring.
+    """
+    signed: Dict[str, float] = {}
+    for cat, value in needs.items():
+        cat_key = str(cat).lower()
+        deficit = float(value)
+        if cat_key in RATE_STAT_CATS:
+            signed[cat_key] = deficit
+            continue
+
+        direction = CATEGORY_DIRECTIONS.get(cat_key.upper(), "higher")
+        if direction == "higher" and deficit > 0:
+            signed[cat_key] = -deficit
+        else:
+            signed[cat_key] = deficit
+    return signed
 
 
 def marginal_rate_impact(
@@ -230,7 +264,16 @@ def compute_need_score(
             # Translate canonical code (e.g. "HR_B") to board key (e.g. "hr")
             # so it aligns with PlayerProjection.cat_scores keys.
             board_key = _CANONICAL_TO_BOARD.get(cd.category.upper(), cd.category.lower())
-            needs_dict[board_key] = float(cd.deficit)
+            raw_deficit = abs(float(cd.deficit))
+            is_winning = bool(cd.winning)
+            if board_key in RATE_STAT_CATS:
+                needs_dict[board_key] = -raw_deficit if is_winning else raw_deficit
+            else:
+                direction = CATEGORY_DIRECTIONS.get(board_key.upper(), "higher")
+                if direction == "higher":
+                    needs_dict[board_key] = raw_deficit if is_winning else -raw_deficit
+                else:
+                    needs_dict[board_key] = -raw_deficit if is_winning else raw_deficit
 
     if not needs_dict:
         return float(player_z_score)

@@ -295,12 +295,15 @@ def _category_aware_value(player: PlayerDecisionInput, need_vector) -> float:
         return _composite_value(player)
 
     from backend.fantasy_baseball.category_aware_scorer import (
+        CategoryNeedVector,
         PlayerCategoryImpactVector,
+        need_magnitudes_to_signed_vector,
         score_fa_against_needs,
     )
+    signed_needs = need_magnitudes_to_signed_vector(getattr(need_vector, "needs", {}) or {})
     cat_score = score_fa_against_needs(
         PlayerCategoryImpactVector(impacts=impacts),
-        need_vector,
+        CategoryNeedVector(needs=signed_needs),
     )
     # Scale cat_score (typical range ±3–10) to ±1.5 additive adjustment.
     # Bound ensures the output stays interpretable relative to _composite_value

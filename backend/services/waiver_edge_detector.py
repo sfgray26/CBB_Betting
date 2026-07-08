@@ -875,6 +875,7 @@ class WaiverEdgeDetector:
         from backend.fantasy_baseball.category_aware_scorer import (
             CategoryNeedVector,
             PlayerCategoryImpactVector,
+            need_magnitudes_to_signed_vector,
             score_fa_against_needs,
             RATE_STAT_CATS,
             RATE_STAT_LEAGUE_STD,
@@ -914,7 +915,7 @@ class WaiverEdgeDetector:
 
         return score_fa_against_needs(
             PlayerCategoryImpactVector(impacts={k: float(v) for k, v in cat_scores.items()}),
-            CategoryNeedVector(needs={k: float(v) for k, v in deficits.items()}),
+            CategoryNeedVector(needs=need_magnitudes_to_signed_vector(deficits)),
         )
 
     def _has_dead_2b(self, roster):
