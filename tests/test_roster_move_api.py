@@ -445,6 +445,47 @@ class TestBulkRosterMoveEndpoint:
         assert "errors" in data
         assert isinstance(data["errors"], list)
 
+    def test_bulk_apply_allows_legal_duplicate_pitcher_slots(self, fantasy_client):
+        """Existing Yahoo rosters can legally contain multiple SP/RP/P slots."""
+        pitcher_roster = self._MOCK_ROSTER + [
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Starter Two",
+                "team": "ATL",
+                "positions": ["SP"],
+                "selected_position": "SP",
+            },
+            {
+                "player_key": "469.l.72586.p.55555",
+                "name": "Pitcher One",
+                "team": "SEA",
+                "positions": ["SP", "RP"],
+                "selected_position": "P",
+            },
+            {
+                "player_key": "469.l.72586.p.66666",
+                "name": "Pitcher Two",
+                "team": "HOU",
+                "positions": ["SP", "RP"],
+                "selected_position": "P",
+            },
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = pitcher_roster
+        mock_client.set_lineup.return_value = {
+            "applied": ["469.l.72586.p.11111"],
+            "skipped": [],
+            "warnings": [],
+        }
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/bulk-apply",
+                json={"moves": [{"player_key": "469.l.72586.p.11111", "target_position": "1B"}]},
+            )
+
+        assert response.status_code == 200
+
     def test_bulk_apply_invalid_position_returns_400(self, fantasy_client):
         """Invalid position in any move triggers 400 before Yahoo call."""
         response = fantasy_client.post(

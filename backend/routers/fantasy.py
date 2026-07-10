@@ -4742,11 +4742,13 @@ async def bulk_apply_roster_moves(
     # ATOMICITY VALIDATION: Ensure lineup is valid before calling Yahoo API
     # These checks prevent partial writes by validating BEFORE any API call
 
-    # Check 1: No duplicate position slots (BN can have multiple, others limited to 1)
+    # Check 1: No duplicate position slots beyond legal roster capacities
+    # BN/IL/IL60 are intentionally unbounded. Pitcher slots are duplicated in
+    # Yahoo roster layouts, so they must not be treated as one-per-position.
     active_slots = {}
     slot_limits = {
         "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1, "LF": 1, "CF": 1, "RF": 1,
-        "Util": 1, "SP": 1, "RP": 1, "P": 1,
+        "Util": 1, "SP": 2, "RP": 2, "P": 3,
         # BN, IL, IL60 have no limit
     }
     duplicates = []
