@@ -49,7 +49,13 @@ CHECK_CONSTRAINT_NAME = "ck_pim_bdl_not_mlbam"
 
 
 def find_corrupted_pairs(db) -> list[dict]:
-    """Corrupted yahoo rows paired with their clean same-name sibling."""
+    """Corrupted yahoo rows paired with their clean same-name sibling.
+
+    Two corruption classes, both meaning "bdl_id actually holds an MLBAM id":
+      1. c.bdl_id = c.mlbam_id (mlbam copied into both columns)
+      2. c.mlbam_id IS NULL but a same-name row's mlbam_id equals c.bdl_id
+         (the mlbam evidence lives on a third row, e.g. Jordan Walker)
+    """
     rows = db.execute(text("""
         SELECT c.id            AS bad_id,
                c.yahoo_key     AS yahoo_key,
@@ -65,10 +71,18 @@ def find_corrupted_pairs(db) -> list[dict]:
           ON s.normalized_name = c.normalized_name
          AND s.id <> c.id
          AND s.bdl_id IS NOT NULL
+         AND s.bdl_id <> c.bdl_id
          AND (s.mlbam_id IS NULL OR s.bdl_id <> s.mlbam_id)
         WHERE c.yahoo_key IS NOT NULL
           AND c.bdl_id IS NOT NULL
-          AND c.bdl_id = c.mlbam_id
+          AND (
+              c.bdl_id = c.mlbam_id
+              OR (c.mlbam_id IS NULL AND EXISTS (
+                    SELECT 1 FROM player_id_mapping m
+                    WHERE m.normalized_name = c.normalized_name
+                      AND m.id <> c.id
+                      AND m.mlbam_id = c.bdl_id))
+          )
         ORDER BY c.id
     """)).mappings().all()
 

@@ -95,6 +95,25 @@ class TestComputeRosterProjectionCoverage:
         assert report["status"] == "yellow"
         assert report["missing"][0]["coverage"] == "stale"
 
+    def test_il_players_excluded_from_denominator(self):
+        roster = _roster(("469.p.1", "Juan Soto"), ("469.p.3", "Garrett Crochet"))
+        roster[1]["status"] = "IL"
+        resolve = {"469.p.1": {"bdl_id": 1106}}
+        db = _db_with_latest_scores({1106: FRESH})
+
+        def fake_il(player, overlay=None):
+            return player.get("status") == "IL"
+
+        with patch("backend.routers.fantasy._resolve_roster_player_bdl_ids", return_value=resolve), \
+             patch("backend.routers.fantasy._is_il_designated", side_effect=fake_il), \
+             patch("backend.services.injury_overlay.load_injury_overlays_for_yahoo_players",
+                   return_value={}):
+            report = compute_roster_projection_coverage(db, roster, TARGET)
+
+        assert report["status"] == "green"
+        assert report["total"] == 1
+        assert report["il_excluded"][0]["name"] == "Garrett Crochet"
+
     def test_empty_roster_is_green(self):
         db = _db_with_latest_scores({})
         with patch("backend.routers.fantasy._resolve_roster_player_bdl_ids", return_value={}):

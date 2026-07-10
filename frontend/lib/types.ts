@@ -259,6 +259,7 @@ export interface ProjectionCoverageResponse {
   status: "green" | "yellow" | "red"
   players: ProjectionCoveragePlayer[]
   missing: ProjectionCoveragePlayer[]
+  il_excluded?: { player_key: string; name: string; coverage: "il_excluded" }[]
 }
 
 export interface InjuryFlag {

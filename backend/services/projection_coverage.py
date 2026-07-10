@@ -54,6 +54,30 @@ def compute_roster_projection_coverage(db, raw_players: list, target_date: str |
         target_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
     players = [p for p in raw_players if isinstance(p, dict) and p.get("player_key")]
+
+    # IL players accrue no rolling-window stats, so stale/missing scores are
+    # expected -- exclude them from the denominator (mirrors the optimizer,
+    # which never places IL players in active slots). Fail open: if overlay
+    # loading breaks, treat everyone as active rather than hiding gaps.
+    il_players = []
+    try:
+        from backend.routers.fantasy import _is_il_designated
+        from backend.services.injury_overlay import load_injury_overlays_for_yahoo_players
+
+        overlays = load_injury_overlays_for_yahoo_players(db, players)
+        active = []
+        for p in players:
+            if _is_il_designated(p, overlays.get(p["player_key"])):
+                il_players.append({
+                    "player_key": p["player_key"],
+                    "name": p.get("name", "Unknown"),
+                    "coverage": "il_excluded",
+                })
+            else:
+                active.append(p)
+        players = active
+    except Exception as exc:
+        logger.debug("projection_coverage: IL overlay check skipped: %s", exc)
     player_key_to_ids = _resolve_roster_player_bdl_ids(db, players)
 
     bdl_ids = [
@@ -137,4 +161,5 @@ def compute_roster_projection_coverage(db, raw_players: list, target_date: str |
         "status": status,
         "players": results,
         "missing": missing,
+        "il_excluded": il_players,
     }
