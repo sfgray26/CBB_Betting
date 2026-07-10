@@ -1,11 +1,49 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
 > **Date:** 2026-07-10 | **Status:** ✅ ROOT CAUSE FIXED — 100% PROJECTION COVERAGE, TABLE REPAIRED, CONSTRAINT INSTALLED
-> **Branch:** `stable/cbb-prod` | **Commit:** 3dddcc4
+> **Branch:** `stable/cbb-prod` | **Commit:** a60be4a
 
 ---
 
 ## Current Mission State
+
+### P0 Surgical Fixes — Route Shadowing + Mutation Auth ✅ DEPLOYED & VALIDATED (2026-07-10 PM)
+
+**Fix 1 — Inline route removal (`d09e2d0`):** All inline `/api/fantasy/*`,
+`/api/dashboard*`, and `/api/user/preferences` routes deleted from
+`backend/main.py` (~3,270 lines). Routes are served exclusively by
+`backend/routers/fantasy.py`. **Exception kept inline:**
+`GET /api/fantasy/projections/canonical` has no router equivalent and the
+frontend calls it (`frontend/lib/api.ts:378`) — migrate it to the router in a
+future task, then delete the inline copy.
+Validated in prod (deploy `00ab703a`): `GET /api/fantasy/roster` → 200 and
+Railway logs show `backend.routers.fantasy - INFO - ROUTER_EXECUTED`.
+
+**Fix 2 — Auth on mutation endpoints (`a60be4a`):** `POST /api/fantasy/roster/move`
+and `POST /api/fantasy/roster/bulk-apply` now require `verify_api_key`.
+Validated in prod (deploy `bf4544e1`): unauthenticated POST → 401 on both;
+authenticated POST clears auth (move with invalid position → 200 `success:false`,
+bulk-apply empty moves → 400) — validated without mutating the live roster.
+Test fixtures in `tests/test_roster_move_api.py` and
+`tests/test_roster_move_swap_logic.py` got the repo-standard
+`dependency_overrides[verify_api_key]` pattern.
+
+**Fix 3 — Frontend build:** No change needed. `matchup-strip.test.tsx` has no
+`cat as any`; `tsc --noEmit` and `npm run build` both pass. There is no
+`npm test` script in `frontend/package.json`. Frontend `/` and
+`/war-room/roster` return 200 in prod.
+
+**Cleanup queue:**
+1. Remove TEMPORARY `logger.info("ROUTER_EXECUTED")` marker from
+   `get_fantasy_roster` in `backend/routers/fantasy.py` (~line 3886) — it was
+   added for Fix 1 validation, which is complete.
+2. Pre-existing (NOT caused by these fixes): 6 tests in
+   `tests/test_ballpark_factors.py` fail under full-suite runs but pass in
+   isolation — order-dependent state pollution, reproduced at HEAD without any
+   of these changes. Needs a dedicated debugging task.
+3. `test_main_py_briefing_serializer_has_name_field` was removed from
+   `tests/test_briefing_category_names.py` — it asserted the now-deleted
+   mirrored serializer in main.py.
 
 ### Root-Cause Fix — Identity Resolution + player_id_mapping Repair ✅ DEPLOYED & VERIFIED (2026-07-10)
 
