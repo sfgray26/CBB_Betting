@@ -14,6 +14,7 @@ from backend.fantasy_baseball.category_aware_scorer import (
     CategoryNeedVector,
     PlayerCategoryImpactVector,
     score_fa_against_needs,
+    need_magnitudes_to_signed_vector,
 )
 
 
@@ -161,7 +162,9 @@ class TestDirectScorerParity:
 
         # Direct computation via score_fa_against_needs + blend
         # Lowercase category names to match board keys
-        needs_dict = {cd.category.lower(): cd.deficit for cd in deficits}
+        needs_dict = need_magnitudes_to_signed_vector(
+            {cd.category.lower(): cd.deficit for cd in deficits}
+        )
         team_needs = CategoryNeedVector(needs=needs_dict)
         impacts_dict = {k: float(v) for k, v in cat_scores.items()}
         fa_impact = PlayerCategoryImpactVector(impacts=impacts_dict)
