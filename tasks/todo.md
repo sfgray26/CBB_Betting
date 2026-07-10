@@ -4,6 +4,53 @@
 > Canonical source: `HANDOFF.md`
 > This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
 
+## Current Session Override — 2026-07-10 BDL Integration + player_id_mapping Root-Cause Fix
+
+Status: IN PROGRESS.
+
+Mission: replace the corruption workaround with a clean table, BDL-primary projection
+pipeline, and coverage monitoring. Spec from user 2026-07-10.
+
+Architectural note: CLAUDE.md mandates direct BDL REST + Pydantic for production
+ingestion (hosted BDL MCP is research/validation only). User spec allows REST
+("If BDL MCP is too complex, use BDL REST API directly"). Therefore: REST is the
+production transport; the MCP-shaped resolver API lives in bdl_mcp_client.py.
+
+### Phase 0 — Investigation (read-only)
+- [ ] Live BDL REST probes: Cristopher Sánchez, Nasim Nuñez, Juan Soto, Garrett Crochet
+      (exact API responses recorded for report)
+- [ ] Prod DB audit via railway ssh: corruption count, NULL bdl_id count, actual FK
+      constraints referencing player_id_mapping, rows for the 4 named players
+
+### Phase 1 — BDL resolver client
+- [ ] backend/services/bdl_mcp_client.py — MCP-shaped API over BDL REST:
+      search_players, get_player_by_name, get_player_stats, get_projections
+- [ ] Tests in tests/
+
+### Phase 2 — player_id_mapping cleanup
+- [ ] backend/scripts/repair_player_id_mapping.py: merge duplicate rows, repoint
+      dependent FKs, re-resolve bdl_id via BDL search where missing
+- [ ] DB constraints migration: partial unique indexes on yahoo_key / bdl_id;
+      decide NOT NULL feasibility from audit data
+- [ ] Run repair in production, validate named players
+- [ ] Downgrade corruption workaround in fantasy.py once table is clean
+
+### Phase 3 — Source priority + coverage monitoring
+- [ ] Projection source priority logging in ingestion (BDL → Yahoo ROS → Statcast)
+- [ ] Daily reconciliation job (advisory lock 100_042): roster vs player_scores
+- [ ] GET /api/fantasy/projection-coverage endpoint (percent + missing list)
+- [ ] Frontend coverage widget (green 100% / yellow 90-99 / red <90)
+
+### Phase 4 — Validation
+- [ ] Sánchez + Nuñez real projections (verified by query)
+- [ ] Optimizer coverage >95% verified in prod
+- [ ] Corruption audit query returns 0
+- [ ] Tests pass, py_compile clean
+
+Review: (fill in at end)
+
+---
+
 ## Current Session Override — 2026-04-20 Fantasy Endpoint Repair
 
 Status: COMPLETE locally.

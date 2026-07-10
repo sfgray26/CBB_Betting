@@ -28,7 +28,15 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from backend.data_contracts import MLBBettingOdd, MLBGame, MLBInjury, MLBPlayer, MLBPlayerStats, BDLResponse
+from backend.data_contracts import (
+    MLBBettingOdd,
+    MLBGame,
+    MLBInjury,
+    MLBPlayer,
+    MLBPlayerStats,
+    MLBSeasonStats,
+    BDLResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -569,6 +577,70 @@ class BallDontLieClient:
                         "get_mlb_stats(): validation failed for row player_id=%s game_id=%s -- %s",
                         raw_row.get("player", {}).get("id") if isinstance(raw_row, dict) else "?",
                         raw_row.get("game_id") if isinstance(raw_row, dict) else "?",
+                        exc,
+                    )
+
+            next_cursor = meta.get("next_cursor") if isinstance(meta, dict) else None
+            if not next_cursor:
+                break
+            cursor = next_cursor
+            page += 1
+            time.sleep(0.1)
+
+        return results
+
+    # ------------------------------------------------------------------
+    # MLB Season Aggregates -- /mlb/v1/season_stats (verified live 2026-07-10)
+    # ------------------------------------------------------------------
+
+    def get_mlb_season_stats(
+        self,
+        season: int = 2026,
+        player_ids: Optional[List[int]] = None,
+        postseason: bool = False,
+    ) -> List[MLBSeasonStats]:
+        """
+        Fetch season-aggregated stats from BDL /mlb/v1/season_stats.
+
+        This is the true aggregate endpoint: one row per player per season,
+        with batting_*/pitching_*/fielding_* fields pre-summed by BDL.
+        (get_mlb_player_season_stats() filters the per-game /stats endpoint
+        and returns per-game rows -- prefer this method for season lines.)
+
+        Returns empty list on any API error (logged, never raises).
+        """
+        params: Dict[str, Any] = {
+            "season": season,
+            "postseason": str(postseason).lower(),
+            "per_page": 100,
+        }
+        if player_ids:
+            params["player_ids[]"] = player_ids
+
+        results: List[MLBSeasonStats] = []
+        cursor: Optional[int] = None
+        page = 0
+        max_pages = 50
+
+        while page < max_pages:
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                raw = self._mlb_get("/season_stats", params=params)
+            except Exception as exc:
+                logger.error("get_mlb_season_stats() page=%d HTTP error: %s", page, exc)
+                break
+
+            rows = raw.get("data", [])
+            meta = raw.get("meta", {})
+
+            for raw_row in rows:
+                try:
+                    results.append(MLBSeasonStats.model_validate(raw_row))
+                except Exception as exc:
+                    logger.warning(
+                        "get_mlb_season_stats(): validation failed for player_id=%s -- %s",
+                        raw_row.get("player", {}).get("id") if isinstance(raw_row, dict) else "?",
                         exc,
                     )
 

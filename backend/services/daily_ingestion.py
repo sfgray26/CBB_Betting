@@ -148,6 +148,7 @@ LOCK_IDS = {
     "bridge_mapping_to_identities": 100_041,  # Coverage: seed player_identities from player_id_mapping
     "auto_stream": 100_042,  # Loop 16: Auto-Stream execution (6 AM ET)
     "ownership_refresh": 100_043,  # Loop 28: Ownership% refresh every 30 min during season
+    "projection_coverage": 100_044,  # 2026-07-10: roster vs player_scores reconciliation
 }
 
 
@@ -1121,6 +1122,18 @@ class DailyIngestionOrchestrator:
             CronTrigger(hour=7, minute=0, timezone=tz),
             id="decision_optimization",
             name="Decision Engine Optimization",
+            replace_existing=True,
+        )
+
+        # Projection coverage reconciliation: daily 7:30 AM ET (after player_scores
+        # at 4 AM and decision_optimization at 7 AM). Compares the active Yahoo
+        # roster to player_scores and WARNs on any player missing a projection so
+        # gaps surface within 24h instead of silently degrading the optimizer.
+        self._scheduler.add_job(
+            self._reconcile_projection_coverage,
+            CronTrigger(hour=7, minute=30, timezone=tz),
+            id="projection_coverage",
+            name="Projection Coverage Reconciliation",
             replace_existing=True,
         )
 
@@ -3491,6 +3504,69 @@ class DailyIngestionOrchestrator:
 
         return await _with_advisory_lock(LOCK_IDS["player_momentum"], "player_momentum", _run)
 
+    async def _reconcile_projection_coverage(self) -> dict:
+        """
+        Daily roster-vs-player_scores reconciliation (lock 100_044, 7:30 AM ET).
+
+        Fetches the active Yahoo roster, classifies each player's projection
+        coverage via compute_roster_projection_coverage, and WARNs when any
+        player is missing a projection -- the alerting contract is that a gap
+        never survives 24h unnoticed. Read-only: writes nothing but job telemetry.
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.projection_coverage import (
+                compute_roster_projection_coverage,
+            )
+
+            try:
+                from backend.fantasy_baseball.yahoo_client_resilient import (
+                    YahooFantasyClient,
+                )
+                client = YahooFantasyClient()
+                raw_players = client.get_roster()
+            except Exception as exc:
+                logger.error("projection_coverage: Yahoo roster fetch failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("projection_coverage", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+
+            db = SessionLocal()
+            try:
+                report = compute_roster_projection_coverage(db, raw_players)
+            except Exception as exc:
+                logger.error("projection_coverage: reconciliation failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("projection_coverage", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            self._record_job_run("projection_coverage", "success", report["total"])
+            log = logger.warning if report["status"] != "green" else logger.info
+            log(
+                "projection_coverage: %s -- %.1f%% (%d/%d covered) missing=%s",
+                report["status"].upper(), report["coverage_pct"],
+                report["covered"], report["total"],
+                [m["name"] for m in report["missing"]] or "none",
+            )
+            return {
+                "status": "success",
+                "coverage_status": report["status"],
+                "coverage_pct": report["coverage_pct"],
+                "total": report["total"],
+                "missing": [m["name"] for m in report["missing"]],
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(
+            LOCK_IDS["projection_coverage"], "projection_coverage", _run
+        )
+
     async def _compute_opportunity(self) -> dict:
         """
         Daily playing-time opportunity computation (lock 100_037, 5:30 AM ET).
@@ -4622,7 +4698,10 @@ class DailyIngestionOrchestrator:
                 def _normalize_identity_name(name: str) -> str:
                     if not name:
                         return ""
-                    normalized = unicodedata.normalize("NFKD", name).lower().strip()
+                    nfkd = unicodedata.normalize("NFKD", name)
+                    normalized = "".join(
+                        c for c in nfkd if not unicodedata.combining(c)
+                    ).lower().strip()
                     for suffix in (" jr.", " sr.", " ii", " iii", " iv", " jr", " sr"):
                         if normalized.endswith(suffix):
                             normalized = normalized[: -len(suffix)].strip()
@@ -4819,7 +4898,10 @@ class DailyIngestionOrchestrator:
                     def _norm_fa_name(name: str) -> str:
                         if not name:
                             return ""
-                        n = unicodedata.normalize("NFKD", name).lower().strip()
+                        nfkd = unicodedata.normalize("NFKD", name)
+                        n = "".join(
+                            c for c in nfkd if not unicodedata.combining(c)
+                        ).lower().strip()
                         for suffix in (" jr.", " sr.", " ii", " iii", " iv", " jr", " sr"):
                             if n.endswith(suffix):
                                 n = n[: -len(suffix)].strip()

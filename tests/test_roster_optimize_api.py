@@ -670,8 +670,11 @@ class TestRosterOptimizeEndpoint:
             assert source["severity"] in ["fresh", "warning", "critical", "unknown"]
             assert "minutes_ago" in source
 
-    def test_insufficient_projection_data_returns_valid_error_response(self, fantasy_client):
+    def test_insufficient_projection_data_returns_valid_error_response(self, fantasy_client, monkeypatch):
         """When optimizer returns insufficient data error, response must have all required fields."""
+        # Enable coverage check for this test to verify error response structure
+        monkeypatch.setenv("COVERAGE_CHECK_ENABLED", "1")
+
         # Large roster with many active slots but insufficient projections
         mock_roster = [
             {

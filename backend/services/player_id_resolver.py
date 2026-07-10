@@ -16,8 +16,6 @@ It does NOT call the BDL API -- it consumes BDL player.id from ingested data.
 ADR-004: Never import betting_model or analysis from this file.
 """
 
-from datetime import date as date_type
-
 import contextlib
 import io
 import logging
@@ -343,10 +341,18 @@ def find_alternative_player_score(
                 )
                 return alt_score.score_0_100, "player_scores"
 
-    # WORKAROUND Step 2: Find alternative BDL IDs by full_name
+    # WORKAROUND Step 2: Find alternative BDL IDs by name. Match on
+    # normalized_name (accent-stripped) — Yahoo sends "Cristopher Sánchez"
+    # while mapping rows sourced from BDL store "Cristopher Sanchez", so a
+    # raw full_name equality misses exactly the players this fallback exists for.
     if full_name:
+        from sqlalchemy import or_
+
         alt_mappings = db.query(PlayerIDMapping.bdl_id).filter(
-            PlayerIDMapping.full_name == full_name,
+            or_(
+                PlayerIDMapping.full_name == full_name,
+                PlayerIDMapping.normalized_name == _normalize_name(full_name),
+            ),
             PlayerIDMapping.bdl_id != bdl_id,
             PlayerIDMapping.bdl_id.isnot(None)
         ).all()
