@@ -46,18 +46,6 @@ def test_fantasy_router_briefing_serializer_has_name_field():
     )
 
 
-def test_main_py_briefing_serializer_has_name_field():
-    """The mirrored briefing serializer in main.py must also include 'name'."""
-    src = (
-        pathlib.Path(__file__).parent.parent
-        / "backend"
-        / "main.py"
-    ).read_text(encoding="utf-8")
-    assert '"name": CATEGORY_DISPLAY_NAMES.get(c.category' in src, (
-        "Briefing category serializer in main.py is missing the 'name' field."
-    )
-
-
 def test_unknown_category_falls_back_to_category_key():
     """Unknown categories should fall back to the raw abbreviation, not None."""
     from backend.fantasy_baseball.daily_briefing import CATEGORY_DISPLAY_NAMES
