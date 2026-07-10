@@ -531,6 +531,87 @@ export function WaiverTargetsWidget() {
   )
 }
 
+// ─── Projection Coverage Widget (independent endpoint) ────────────────────────
+
+const COVERAGE_REASON_LABELS: Record<string, string> = {
+  missing_mapping: "No BDL identity mapping",
+  missing_scores: "No projection scores ingested",
+  stale: "Projection older than 2 days",
+}
+
+export function ProjectionCoverageWidget() {
+  const [expanded, setExpanded] = useState(false)
+  const { data } = useSuspenseQuery({
+    queryKey: ["dashboard-projection-coverage"],
+    queryFn: endpoints.getProjectionCoverage,
+    staleTime: 2 * 60_000,
+    refetchInterval: 5 * 60_000,
+  })
+
+  const statusColor =
+    data.status === "green"
+      ? "text-status-safe"
+      : data.status === "yellow"
+      ? "text-status-bubble"
+      : "text-status-lost"
+  const dotColor =
+    data.status === "green"
+      ? "bg-status-safe"
+      : data.status === "yellow"
+      ? "bg-status-bubble"
+      : "bg-status-lost"
+
+  return (
+    <Card className="bg-bg-surface border-border-subtle">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-text-primary text-sm">
+          <Activity className="h-4 w-4 text-accent-gold" />
+          Projection Coverage
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full text-left"
+          aria-expanded={expanded}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className={cn("h-2.5 w-2.5 rounded-full", dotColor)} />
+              <span className={cn("text-2xl font-semibold tabular-nums", statusColor)}>
+                {data.coverage_pct.toFixed(0)}%
+              </span>
+            </div>
+            <span className="text-text-muted text-xs">
+              {data.covered}/{data.total} players covered
+              {data.missing.length > 0 && " — click for details"}
+            </span>
+          </div>
+        </button>
+        {data.missing.length === 0 ? (
+          <p className="text-text-muted text-xs mt-2">
+            Every roster player has a fresh projection.
+          </p>
+        ) : (
+          expanded && (
+            <ul className="space-y-1.5 mt-3">
+              {data.missing.map((m) => (
+                <li key={m.player_key} className="flex items-center justify-between gap-2">
+                  <p className="text-text-secondary text-sm">{m.name}</p>
+                  <span className="text-text-muted text-xs">
+                    {COVERAGE_REASON_LABELS[m.coverage] ?? m.coverage}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 // ─── Streaks Widget (independent endpoint) ────────────────────────────────────
 
 export function StreaksWidget() {

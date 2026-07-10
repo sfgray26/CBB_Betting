@@ -8,6 +8,7 @@ import {
   LineupGapsWidget,
   InjuryFlagsWidget,
   WaiverTargetsWidget,
+  ProjectionCoverageWidget,
   StreaksWidget,
   BudgetWidget,
   ProbablePitchersWidget,
@@ -19,6 +20,7 @@ import {
   LineupGapsSkeleton,
   InjuryFlagsSkeleton,
   WaiverTargetsSkeleton,
+  ProjectionCoverageSkeleton,
   StreaksSkeleton,
   BudgetSkeleton,
   ProbablePitchersSkeleton,
@@ -74,6 +76,12 @@ export default function DashboardPage() {
         <ErrorBoundary fallback={<WidgetError title="Waiver Targets" />}>
           <Suspense fallback={<WaiverTargetsSkeleton />}>
             <WaiverTargetsWidget />
+          </Suspense>
+        </ErrorBoundary>
+
+        <ErrorBoundary fallback={<WidgetError title="Projection Coverage" />}>
+          <Suspense fallback={<ProjectionCoverageSkeleton />}>
+            <ProjectionCoverageWidget />
           </Suspense>
         </ErrorBoundary>
 

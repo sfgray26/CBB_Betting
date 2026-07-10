@@ -238,6 +238,29 @@ export interface WaiverTarget {
   starts_this_week?: number
 }
 
+export interface ProjectionCoveragePlayer {
+  player_key: string
+  name: string
+  bdl_id: number | null
+  as_of_date: string | null
+  coverage:
+    | "covered"
+    | "covered_workaround"
+    | "missing_mapping"
+    | "missing_scores"
+    | "stale"
+}
+
+export interface ProjectionCoverageResponse {
+  target_date: string
+  total: number
+  covered: number
+  coverage_pct: number
+  status: "green" | "yellow" | "red"
+  players: ProjectionCoveragePlayer[]
+  missing: ProjectionCoveragePlayer[]
+}
+
 export interface InjuryFlag {
   player_id: string
   name: string

@@ -128,6 +128,23 @@ export function WaiverTargetsSkeleton() {
   )
 }
 
+export function ProjectionCoverageSkeleton() {
+  return (
+    <Card className="bg-bg-surface border-border-subtle">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-text-primary text-sm">
+          <Activity className="h-4 w-4 text-accent-gold" />
+          Projection Coverage
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <SkeletonRow className="w-24 h-7" />
+        <SkeletonRow className="w-full" />
+      </CardContent>
+    </Card>
+  )
+}
+
 export function StreaksSkeleton() {
   return (
     <Card className="bg-bg-surface border-border-subtle">

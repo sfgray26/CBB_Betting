@@ -23,6 +23,7 @@ import type {
   RatingsStatus,
   DashboardResponse,
   AsyncJobStatus,
+  ProjectionCoverageResponse,
   StreakPlayer,
   WaiverTarget,
   DecisionsResponse,
@@ -320,6 +321,10 @@ export const endpoints = {
     apiFetch<{ success: boolean; targets: WaiverTarget[] }>(
       '/api/dashboard/waiver-targets'
     ),
+
+  /** Get roster projection coverage (green/yellow/red reconciliation) */
+  getProjectionCoverage: () =>
+    apiFetch<ProjectionCoverageResponse>('/api/fantasy/projection-coverage'),
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Fantasy Baseball Decisions (Layer 3F)

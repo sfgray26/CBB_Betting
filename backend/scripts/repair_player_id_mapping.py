@@ -230,6 +230,83 @@ def resolve_null_bdl_ids(db, apply: bool) -> tuple[int, int]:
     return resolved, unresolved
 
 
+def fix_normalized_names(db, apply: bool) -> int:
+    """
+    Re-normalize normalized_name values that still contain non-ASCII chars.
+
+    The pre-2026-07-10 normalizer kept combining marks ("josé soriano"), which
+    breaks every same-name join in the repair and resolver paths. Recomputes
+    with the corrected accent-stripping normalizer.
+    """
+    from backend.services.bdl_mcp_client import _normalize_name
+
+    rows = db.execute(text(r"""
+        SELECT id, full_name FROM player_id_mapping
+        WHERE normalized_name !~ '^[\x20-\x7e]*$'
+    """)).mappings().all()
+    logger.info("normalized_name rows containing non-ASCII: %d", len(rows))
+    fixed = 0
+    for r in rows:
+        clean = _normalize_name(r["full_name"])
+        if not clean:
+            continue
+        if not apply:
+            logger.info("[dry-run] would re-normalize id=%d -> %r", r["id"], clean)
+            fixed += 1
+            continue
+        db.execute(text(
+            "UPDATE player_id_mapping SET normalized_name = :n, updated_at = NOW() WHERE id = :id"
+        ), {"n": clean, "id": r["id"]})
+        fixed += 1
+    if apply:
+        db.commit()
+    logger.info("normalized_name re-normalized: %d (apply=%s)", fixed, apply)
+    return fixed
+
+
+def manual_merge(db, spec: str, apply: bool) -> None:
+    """
+    Operator-verified merge: --manual-merge BAD_ID:GOOD_ID:MLBAM_ID.
+
+    For cases the automatic sibling picker correctly refuses (e.g. two real
+    players sharing a name). Moves yahoo identity from BAD onto GOOD, sets
+    GOOD's mlbam_id explicitly (overwriting -- operator has verified it), and
+    repoints FK rows from BAD's bdl value to GOOD's bdl_id.
+    """
+    bad_id, good_id, mlbam = (int(x) for x in spec.split(":"))
+    bad = db.execute(text(
+        "SELECT yahoo_key, yahoo_id, bdl_id, full_name FROM player_id_mapping WHERE id = :id"
+    ), {"id": bad_id}).mappings().first()
+    good = db.execute(text(
+        "SELECT bdl_id, full_name FROM player_id_mapping WHERE id = :id"
+    ), {"id": good_id}).mappings().first()
+    if not bad or not good:
+        logger.error("manual_merge: row missing (bad=%s good=%s)", bool(bad), bool(good))
+        return
+    if not apply:
+        logger.info("[dry-run] would manual-merge %s (id=%d, bdl=%s) -> %s (id=%d, bdl=%s) mlbam=%d",
+                    bad["full_name"], bad_id, bad["bdl_id"],
+                    good["full_name"], good_id, good["bdl_id"], mlbam)
+        return
+    try:
+        if bad["bdl_id"] is not None:
+            repoint_fk_rows(db, bad["bdl_id"], good["bdl_id"])
+        db.execute(text("DELETE FROM player_id_mapping WHERE id = :id"), {"id": bad_id})
+        db.execute(text("""
+            UPDATE player_id_mapping
+               SET yahoo_key = :ykey, yahoo_id = :yid, mlbam_id = :mlbam,
+                   source = 'repair_merge', updated_at = NOW()
+             WHERE id = :good
+        """), {"ykey": bad["yahoo_key"], "yid": bad["yahoo_id"],
+               "mlbam": mlbam, "good": good_id})
+        db.commit()
+        logger.info("MANUAL MERGE %s: id=%d deleted, id=%d now yahoo_key=%s mlbam=%d",
+                    bad["full_name"], bad_id, good_id, bad["yahoo_key"], mlbam)
+    except Exception as exc:
+        db.rollback()
+        logger.error("manual_merge failed: %s", exc)
+
+
 def add_check_constraint(db, apply: bool) -> None:
     """Block the corruption vector at the DB level: bdl_id must never equal mlbam_id."""
     exists = db.execute(text("""
@@ -264,10 +341,16 @@ def main() -> None:
                         help="also resolve yahoo_key rows with NULL bdl_id via BDL search")
     parser.add_argument("--add-constraint", action="store_true",
                         help="add CHECK constraint blocking bdl_id == mlbam_id")
+    parser.add_argument("--manual-merge", metavar="BAD_ID:GOOD_ID:MLBAM_ID",
+                        help="operator-verified merge for ambiguous pairs")
     args = parser.parse_args()
 
     db = SessionLocal()
     try:
+        if args.manual_merge:
+            manual_merge(db, args.manual_merge, args.apply)
+            return
+        fix_normalized_names(db, args.apply)
         fixed, failed = repair_corrupted(db, args.apply)
         logger.info("Corrupted-pair repair: fixed=%d failed=%d (apply=%s)", fixed, failed, args.apply)
         if args.resolve_nulls:
