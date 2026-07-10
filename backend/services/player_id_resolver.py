@@ -16,6 +16,8 @@ It does NOT call the BDL API -- it consumes BDL player.id from ingested data.
 ADR-004: Never import betting_model or analysis from this file.
 """
 
+from datetime import date as date_type
+
 import contextlib
 import io
 import logging
@@ -281,3 +283,86 @@ class PlayerIDResolver:
                 self._db.rollback()
             except Exception:
                 pass
+
+
+def find_alternative_player_score(
+    db,
+    player_key: str,
+    bdl_id: int | None,
+    mlbam_id: int | None,
+    full_name: str,
+    target_date: str,
+) -> tuple[float | None, str]:
+    """
+    Find PlayerScore for a player using PlayerIDMapping corruption workarounds.
+
+    This function handles cases where the primary bdl_id mapping is corrupted
+    or missing by searching for alternative BDL IDs linked to the same player.
+
+    Search strategy:
+      1. If mlbam_id exists: Find all BDL IDs with this mlbam_id (except current)
+      2. If mlbam_id missing or step 1 fails: Search by full_name match
+      3. For each alternative BDL ID found: Query PlayerScore directly
+
+    Args:
+        db: Database session
+        player_key: Yahoo player key for logging
+        bdl_id: Primary BDL ID from player_id_mapping (may be corrupted)
+        mlbam_id: MLBAM ID for cross-linking alternatives
+        full_name: Player name for name-based fallback
+        target_date: Target date for score lookup (as YYYY-MM-DD string)
+
+    Returns:
+        (score, source) tuple:
+        - score: float score_0_100 if found, None if not found
+        - source: "player_scores" if found via workaround, "default" if not found
+    """
+    from backend.models import PlayerIDMapping, PlayerScore
+
+    if bdl_id is None:
+        return None, "default"
+
+    # WORKAROUND Step 1: Find alternative BDL IDs with same mlbam_id
+    if mlbam_id:
+        alt_mappings = db.query(PlayerIDMapping.bdl_id).filter(
+            PlayerIDMapping.mlbam_id == mlbam_id,
+            PlayerIDMapping.bdl_id != bdl_id,
+            PlayerIDMapping.bdl_id.isnot(None)
+        ).all()
+        for alt_row in alt_mappings:
+            alt_bdl_id = alt_row.bdl_id
+            alt_score = db.query(PlayerScore).filter(
+                PlayerScore.bdl_player_id == alt_bdl_id,
+                PlayerScore.as_of_date <= target_date,
+                PlayerScore.window_days == 14
+            ).order_by(PlayerScore.as_of_date.desc()).first()
+            if alt_score:
+                logger.info(
+                    "PlayerIDMapping corruption workaround (mlbam_id): %s using alt bdl_id=%d (score=%.1f) instead of %d",
+                    player_key, alt_bdl_id, alt_score.score_0_100, bdl_id
+                )
+                return alt_score.score_0_100, "player_scores"
+
+    # WORKAROUND Step 2: Find alternative BDL IDs by full_name
+    if full_name:
+        alt_mappings = db.query(PlayerIDMapping.bdl_id).filter(
+            PlayerIDMapping.full_name == full_name,
+            PlayerIDMapping.bdl_id != bdl_id,
+            PlayerIDMapping.bdl_id.isnot(None)
+        ).all()
+        for alt_row in alt_mappings:
+            alt_bdl_id = alt_row.bdl_id
+            alt_score = db.query(PlayerScore).filter(
+                PlayerScore.bdl_player_id == alt_bdl_id,
+                PlayerScore.as_of_date <= target_date,
+                PlayerScore.window_days == 14
+            ).order_by(PlayerScore.as_of_date.desc()).first()
+            if alt_score:
+                logger.info(
+                    "PlayerIDMapping corruption workaround (name): %s using alt bdl_id=%d (score=%.1f) instead of %d",
+                    player_key, alt_bdl_id, alt_score.score_0_100, bdl_id
+                )
+                return alt_score.score_0_100, "player_scores"
+
+    # No alternative found
+    return None, "default"

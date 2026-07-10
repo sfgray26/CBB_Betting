@@ -36,8 +36,8 @@ class TestRosterMoveEndpoint:
                 "player_key": "469.l.72586.p.67890",
                 "name": "Another Player",
                 "team": "BOS",
-                "positions": ["OF"],
-                "selected_position": "OF",
+                "positions": ["LF", "CF", "RF"],  # Specific OF positions
+                "selected_position": "LF",  # Specific OF slot
             },
         ]
 
@@ -136,8 +136,8 @@ class TestRosterMoveEndpoint:
                 "player_key": "469.l.72586.p.99999",
                 "name": "Different Player",
                 "team": "BOS",
-                "positions": ["OF"],
-                "selected_position": "OF",
+                "positions": ["LF", "CF", "RF"],  # Specific OF positions
+                "selected_position": "LF",  # Specific OF slot
             },
         ]
 
@@ -385,8 +385,8 @@ class TestBulkRosterMoveEndpoint:
             "player_key": "469.l.72586.p.33333",
             "name": "Player Three",
             "team": "LAD",
-            "positions": ["OF"],
-            "selected_position": "OF",
+            "positions": ["LF", "CF", "RF"],  # Specific OF positions, not generic "OF"
+            "selected_position": "LF",  # Specific OF slot
         },
     ]
 

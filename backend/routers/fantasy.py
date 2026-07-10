@@ -116,6 +116,9 @@ from backend.services.category_comparator import (
     compare_category,
     get_canonical_category,
 )
+from backend.services.player_id_resolver import (
+    find_alternative_player_score,
+)
 
 # Auto-Stream service (lazy import to avoid circular imports)
 _auto_stream_service = None
@@ -4661,21 +4664,183 @@ async def bulk_apply_roster_moves(
     if validation_errors:
         raise HTTPException(status_code=400, detail={"errors": validation_errors})
 
+    # VALIDATION: Before building lineup, ensure all moves were successfully mapped
+    # This prevents sending invalid positions (like "OF") to Yahoo API
+    unmapped_moves = []
+    for move in request.moves:
+        if move.player_key not in mapped_moves:
+            unmapped_moves.append(move.player_key)
+            logger.error(
+                "bulk_apply: Player %s not found in mapped_moves - mapping failed",
+                move.player_key
+            )
+
+    if unmapped_moves:
+        # Return 400 error - do not call Yahoo API with invalid lineup
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "errors": [
+                    f"Position mapping failed for {len(unmapped_moves)} player(s): {', '.join(unmapped_moves[:5])}"
+                    + ("..." if len(unmapped_moves) > 5 else "")
+                ]
+            }
+        )
+
     # Build full lineup with all moves applied at once (atomic)
     lineup = []
     for player in raw_players:
         pk = player.get("player_key")
         if not pk:
             continue
-        # Use mapped position if player is in moves, otherwise keep current position
-        target = mapped_moves.get(pk, player.get("selected_position", "BN"))
+        # Use mapped position if player is being moved, otherwise keep current position
+        if pk in mapped_moves:
+            target = mapped_moves[pk]
+        else:
+            target = player.get("selected_position", "BN")
         lineup.append({"player_key": pk, "position": target})
 
-    # LOG: Show final lineup payload to verify OF mapping
+    # VALIDATION: Ensure no "OF" positions remain in final lineup
+    # This catches both: (1) moved players with failed OF mapping, and (2) non-moved
+    # players who already had "OF" as their current position
+    of_players = [entry for entry in lineup if entry.get("position") == "OF"]
+    if of_players:
+        # Get names for better error messages
+        of_names = []
+        for entry in of_players[:5]:
+            pk = entry.get("player_key")
+            player = roster_by_key.get(pk, {})
+            name = player.get("name", pk)
+            was_moved = pk in mapped_moves
+            of_names.append(f"{name}{' (moved)' if was_moved else ' (not moved)'}")
+
+        logger.error(
+            "bulk_apply: %d player(s) have 'OF' position in final lineup: %s",
+            len(of_players),
+            ", ".join(of_names)
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "errors": [
+                    f"Cannot apply lineup: {len(of_players)} player(s) have unmapped 'OF' position. "
+                    f"Yahoo requires specific outfield positions (LF/CF/RF). Players: {', '.join(of_names)}"
+                    + ("..." if len(of_players) > 5 else "")
+                ]
+            }
+        )
+
+    # ATOMICITY VALIDATION: Ensure lineup is valid before calling Yahoo API
+    # These checks prevent partial writes by validating BEFORE any API call
+
+    # Check 1: No duplicate position slots (BN can have multiple, others limited to 1)
+    active_slots = {}
+    slot_limits = {
+        "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1, "LF": 1, "CF": 1, "RF": 1,
+        "Util": 1, "SP": 1, "RP": 1, "P": 1,
+        # BN, IL, IL60 have no limit
+    }
+    duplicates = []
+    for entry in lineup:
+        pos = entry.get("position")
+        pk = entry.get("player_key")
+        if pos in slot_limits:
+            count = active_slots.get(pos, 0) + 1
+            if count > slot_limits[pos]:
+                duplicates.append(f"{pos} (player {pk})")
+            active_slots[pos] = count
+
+    if duplicates:
+        logger.error("bulk_apply: Duplicate slots detected: %s", ", ".join(duplicates))
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "errors": [
+                    f"Cannot apply lineup: Duplicate position assignments. Each active slot can only have 1 player. Duplicates: {', '.join(duplicates[:5])}"
+                    + ("..." if len(duplicates) > 5 else "")
+                ]
+            }
+        )
+
+    # Check 2: All players eligible for assigned positions
+    ineligible = []
+    for entry in lineup:
+        pos = entry.get("position")
+        pk = entry.get("player_key")
+        player = roster_by_key.get(pk, {})
+        eligible = player.get("eligible_positions") or player.get("positions") or []
+
+        # Skip eligibility check for exempt slots (BN, IL, IL60, P which accepts SP/RP)
+        if pos in _EXEMPT_SLOTS:
+            continue
+        if pos == "P":
+            # P slot accepts any pitcher position
+            player_eligible = any(e in ["SP", "RP", "P"] for e in eligible)
+        elif pos == "Util":
+            # Util accepts any hitter position
+            player_eligible = any(e in ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"] for e in eligible)
+        else:
+            # Direct position match or OF slot accepts any OF position
+            player_eligible = pos in eligible or (pos == "OF" and any(e in ["LF", "CF", "RF"] for e in eligible))
+
+        if not player_eligible and pos not in _EXEMPT_SLOTS:
+            ineligible.append(f"{player.get('name', pk)} not eligible for {pos}")
+
+    if ineligible:
+        logger.error("bulk_apply: Position eligibility violations: %s", ", ".join(ineligible))
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "errors": [
+                    f"Cannot apply lineup: Players not eligible for assigned positions. {', '.join(ineligible[:5])}"
+                    + ("..." if len(ineligible) > 5 else "")
+                ]
+            }
+        )
+
+    # Check 3: IL players NOT in active slots
+    il_in_active = []
+    for entry in lineup:
+        pos = entry.get("position")
+        pk = entry.get("player_key")
+        player = roster_by_key.get(pk, {})
+        # Check if player has IL designation
+        if _is_il_designated(player):
+            # IL-designated players can only be in IL/IL60 slots
+            if pos not in _IL_SLOTS:
+                il_in_active.append(f"{player.get('name', pk)} in {pos} slot")
+
+    if il_in_active:
+        logger.error("bulk_apply: IL-designated players in active slots: %s", ", ".join(il_in_active))
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "errors": [
+                    f"Cannot apply lineup: IL-designated players cannot be placed in active slots. {', '.join(il_in_active[:5])}"
+                    + ("..." if len(il_in_active) > 5 else "")
+                ]
+            }
+        )
+
+    logger.info(
+        "bulk_apply: Atomicity validation passed - %d players, no duplicates, all eligible, no IL in active slots",
+        len(lineup)
+    )
+
+    # LOG: Show final lineup payload to verify OF mapping - ALL positions now logged
     logger.info("bulk_apply: Final lineup payload (count=%d):", len(lineup))
     for entry in lineup:
-        if entry.get("position") in ("LF", "CF", "RF", "Util"):
-            logger.info("  MAPPED: %s → %s", entry.get("player_key"), entry.get("position"))
+        pos = entry.get("position")
+        pk = entry.get("player_key")
+        # Log all positions, not just LF/CF/RF/Util
+        if pos in ("LF", "CF", "RF", "Util"):
+            logger.info("  MAPPED: %s → %s", pk, pos)
+        elif pos == "OF":
+            logger.error("  UNMAPPED OF: %s → %s (should not reach here!)", pk, pos)
+        elif pos in ("BN", "IL", "IL60"):
+            logger.debug("  BENCH: %s → %s", pk, pos)
+        else:
+            logger.debug("  POSITION: %s → %s", pk, pos)
     logger.info("bulk_apply: Calling set_lineup with %d players", len(lineup))
 
     try:
@@ -5072,66 +5237,21 @@ async def optimize_roster(
                 score = player_scores_map[bdl_id]
                 score_source = "player_scores"
             else:
-                # WORKAROUND: PlayerIDMapping corruption workaround
-                # Check if there's an alternative row with same mlbam_id but different bdl_id
-                # This handles cases where bdl_id field contains mlbam_id value
+                # WORKAROUND: PlayerIDMapping corruption workaround (shared function)
                 mlbam_id = player_key_to_ids[player_key].get("mlbam_id")
-                if mlbam_id:
-                    # Find alternative BDL IDs for this mlbam_id
-                    alt_mappings = db.query(PlayerIDMapping.bdl_id).filter(
-                        PlayerIDMapping.mlbam_id == mlbam_id,
-                        PlayerIDMapping.bdl_id != bdl_id,
-                        PlayerIDMapping.bdl_id.isnot(None)
-                    ).all()
-                    for alt_row in alt_mappings:
-                        alt_bdl_id = alt_row.bdl_id
-                        # BUG FIX: Query DB directly instead of checking player_scores_map
-                        # The pre-built map only contains corrupted bdl_ids, not alternatives
-                        alt_score = db.query(PlayerScore).filter(
-                            PlayerScore.bdl_player_id == alt_bdl_id,
-                            PlayerScore.as_of_date <= target_date,
-                            PlayerScore.window_days == 14
-                        ).order_by(PlayerScore.as_of_date.desc()).first()
-                        if alt_score:
-                            # Found scores under alternative BDL ID!
-                            logger.info(
-                                "PlayerIDMapping corruption workaround: %s using alt bdl_id=%d (score=%.1f) instead of %d",
-                                player_key, alt_bdl_id, alt_score.score_0_100, bdl_id
-                            )
-                            score = alt_score.score_0_100
-                            score_source = "player_scores"
-                            break
-
-                # WORKAROUND EXTENSION: If mlbam_id is missing, try full_name search
-                # This handles cases where corrupted row has no mlbam_id to link alternatives
-                if score_source == "default" and bdl_id not in player_scores_map:
-                    full_name = p.get("name", "")
-                    if full_name:
-                        # Find alternative rows by full_name
-                        alt_mappings = db.query(PlayerIDMapping.bdl_id).filter(
-                            PlayerIDMapping.full_name == full_name,
-                            PlayerIDMapping.bdl_id != bdl_id,
-                            PlayerIDMapping.bdl_id.isnot(None)
-                        ).all()
-                        for alt_row in alt_mappings:
-                            alt_bdl_id = alt_row.bdl_id
-                            # BUG FIX: Query DB directly instead of checking player_scores_map
-                            alt_score = db.query(PlayerScore).filter(
-                                PlayerScore.bdl_player_id == alt_bdl_id,
-                                PlayerScore.as_of_date <= target_date,
-                                PlayerScore.window_days == 14
-                            ).order_by(PlayerScore.as_of_date.desc()).first()
-                            if alt_score:
-                                # Found scores under alternative BDL ID via name match!
-                                logger.info(
-                                    "PlayerIDMapping corruption workaround (name): %s using alt bdl_id=%d (score=%.1f) instead of %d",
-                                    player_key, alt_bdl_id, alt_score.score_0_100, bdl_id
-                                )
-                                score = alt_score.score_0_100
-                                score_source = "player_scores"
-                                break
-
-                if score_source == "default":
+                full_name = p.get("name", "")
+                alt_score, alt_source = find_alternative_player_score(
+                    db=db,
+                    player_key=player_key,
+                    bdl_id=bdl_id,
+                    mlbam_id=mlbam_id,
+                    full_name=full_name,
+                    target_date=target_date,
+                )
+                if alt_score is not None:
+                    score = alt_score
+                    score_source = alt_source
+                else:
                     score, score_source = _projection_fallback_score(p)
                     fallback_count += 1
                     # Track fallback player for high-ownership alert
