@@ -1,11 +1,70 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-07 | **Status:** ✅ IL EXCLUSION & POSITION ELIGIBILITY BUGS FIXED AND VERIFIED
-> **Branch:** `stable/cbb-prod` | **Commit:** 8e3122d
+> **Date:** 2026-07-10 | **Status:** ✅ ROOT CAUSE FIXED — 100% PROJECTION COVERAGE, TABLE REPAIRED, CONSTRAINT INSTALLED
+> **Branch:** `stable/cbb-prod` | **Commit:** 3dddcc4
 
 ---
 
 ## Current Mission State
+
+### Root-Cause Fix — Identity Resolution + player_id_mapping Repair ✅ DEPLOYED & VERIFIED (2026-07-10)
+
+**Mission:** Replace the corruption workaround with a clean table, BDL-primary data,
+and coverage monitoring (user spec 2026-07-10). All four validation gates passed.
+
+**Root Cause 1 — Accent normalization bug (the "Cy Young fallback" bug):**
+`_normalize_identity_name` used NFKD but never stripped combining marks, so
+Yahoo's "Cristopher Sánchez" ≠ DB's "cristopher sanchez" and the resolver
+REJECTED correct mapping rows. Sánchez/Nuñez had correct mappings and fresh
+scores all along — the code refused to match them. Fixed in
+`backend/routers/fantasy.py` + 2 inline copies in `daily_ingestion.py`; the
+workaround's name fallback now also matches on normalized_name. Regression
+tests: `tests/test_identity_name_normalization.py`.
+
+**Root Cause 2 — Table corruption (bdl_id holding MLBAM values):**
+- Class 1: bdl_id == own mlbam_id (403 rows) — merged into clean siblings.
+- Class 2: bdl_id == sibling's mlbam_id, own mlbam NULL (Jordan Walker pattern,
+  50 rows) — 47 merged, 3 documented skips (below).
+- Accented normalized_name rows (persisted by the old bug) re-normalized.
+- Max Muncy manually merged (two real players: LAD bdl=142, ATH bdl=241414).
+- 152 NULL-bdl rows resolved via live BDL search; 240 unresolvable (minor
+  leaguers BDL doesn't carry) left NULL by design.
+- CHECK constraint `ck_pim_bdl_not_mlbam` installed — corruption vector blocked at DB level.
+- Tool: `backend/scripts/repair_player_id_mapping.py` (dry-run default,
+  --apply / --resolve-nulls / --add-constraint / --manual-merge).
+
+**BDL integration (REST per CLAUDE.md; MCP surface shape):**
+- `MLBSeasonStats` contract + `BallDontLieClient.get_mlb_season_stats()` for
+  `/mlb/v1/season_stats` (true aggregate endpoint, previously unused).
+- `backend/services/bdl_mcp_client.py`: `BDLPlayerResolver` with
+  search_players / get_player_by_name / get_player_stats / get_projections,
+  accent-insensitive matching, ambiguity-safe. BDL has NO forward projection
+  endpoint — get_projections packages season-to-date aggregates, source="bdl".
+
+**Coverage monitoring:**
+- `backend/services/projection_coverage.py` — shared reconciliation (IL-aware).
+- `GET /api/fantasy/projection-coverage` — green(100%)/yellow(90-99)/red(<90).
+- Daily job `projection_coverage` (advisory lock **100_044**, 7:30 AM ET) WARNs
+  on any roster player missing projections.
+- Frontend `ProjectionCoverageWidget` on the dashboard grid (deployed 15:28 UTC).
+
+**Production validation (2026-07-10):**
+- BDL live: Sánchez bdl=40 (19 GS, 2.62 ERA, 137 K, 4.99 WAR), Nuñez bdl=164 (86 GP, .247, 33 SB)
+- Mappings: Sánchez 469.p.11706→40, Nuñez 469.p.11785→164, Soto→1106, Crochet→555 ✅
+- Coverage endpoint: **GREEN 100.0% (16/16 active)**, 6 IL excluded ✅
+- Optimizer: Sánchez STARTER 87.03, Soto 99.39, Nuñez bench 66.22, fallbacks: NONE, degraded banner: GONE ✅
+- Corruption audit: class1=0, class2=3 (documented skips) ✅
+
+**Known residue (manual triage queue):**
+1. `bad_id=547` Derek Hill — sibling row already owned by yahoo_key 469.p.64354 (two Yahoo keys claim one player)
+2. `bad_id=554` Jacob Wilson — two real MLB players, needs operator --manual-merge like Muncy
+3. `bad_id=84513` Blake Walston — sibling owned by yahoo_key 469.p.62838
+4. 240 yahoo-keyed rows with NULL bdl_id — minor leaguers absent from BDL; coverage job will flag any that reach the roster
+5. Full-suite pytest has 6 order-dependent flaky failures (ballpark/availability files pass in isolation) — pre-existing, not from this work
+
+**Commits:** `1bde2b2`, `d3dc256`, `3dddcc4` — all deployed to Fantasy-App + observant-benevolence.
+
+---
 
 ### Layer 1 Fix — Projection Pipeline Data Corruption ✅ DEPLOYED & VERIFIED (2026-07-07)
 

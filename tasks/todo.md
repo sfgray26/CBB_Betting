@@ -6,7 +6,19 @@
 
 ## Current Session Override — 2026-07-10 BDL Integration + player_id_mapping Root-Cause Fix
 
-Status: IN PROGRESS.
+Status: COMPLETE. All phases done and production-verified.
+
+Review:
+- The REAL root cause for Sánchez/Nuñez was not missing BDL data or even the
+  table corruption — it was the accent bug in _normalize_identity_name (NFKD
+  without combining-mark strip), which made the resolver reject their CORRECT
+  mapping rows. Their scores existed the whole time.
+- Table corruption (bdl_id=mlbam) affected 450 rows across two classes; all
+  merged except 3 documented ambiguous skips. CHECK constraint now blocks the
+  vector. The corrupting writer (source='yahoo') no longer exists in the code.
+- Production verified: coverage GREEN 100% (16/16 active, 6 IL excluded),
+  optimizer has Sánchez as starter at 87.03, zero fallbacks, no degraded banner.
+- Full validation details in HANDOFF.md §Root-Cause Fix.
 
 Mission: replace the corruption workaround with a clean table, BDL-primary projection
 pipeline, and coverage monitoring. Spec from user 2026-07-10.
