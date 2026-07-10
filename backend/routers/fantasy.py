@@ -3876,6 +3876,9 @@ async def get_fantasy_roster(
     Args:
         force_refresh: If True, bypass cache and fetch fresh from Yahoo (use after roster moves)
     """
+    # TEMPORARY (Fix 1 validation, 2026-07-10): confirms the router-owned
+    # /api/fantasy/roster handler executes in Railway production.
+    logger.info("ROUTER_EXECUTED")
     import asyncio
     now_et = datetime.now(ZoneInfo("America/New_York"))
 

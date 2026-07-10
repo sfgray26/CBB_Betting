@@ -3,8 +3,8 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BulkRosterMove, BulkRosterMoveResponse, BudgetData, ScoreboardResponse, RosterResponse, RotoCategory } from '@/lib/types'
-import { CATEGORY_COLOR } from '@/lib/types'
+import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BulkRosterMove, BulkRosterMoveResponse, BudgetData, MatchupResponse, RosterResponse, RotoCategory } from '@/lib/types'
+import { CATEGORY_COLOR, BATTER_CATEGORIES, PITCHER_CATEGORIES, LOWER_IS_BETTER } from '@/lib/types'
 import {
   Users,
   Loader2,
@@ -261,7 +261,7 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
 // Category Summary — raw stats for actual windows; z-score edge for RoS
 // ───────────────────────────────────────────────────────────────────────────
 
-function CategorySummary({ players, viewMode, matchupRows }: { players: RosterPlayer[]; viewMode: ViewMode; matchupRows?: ScoreboardResponse['rows'] }) {
+function CategorySummary({ players, viewMode, matchupRows }: { players: RosterPlayer[]; viewMode: ViewMode; matchupRows?: MatchupRow[] }) {
   const activePlayers = players.filter((p) => {
     const slot = p.current_slot?.toUpperCase()
     if (slot === 'BN' || slot === 'IL' || slot === 'IL60') return false
@@ -273,14 +273,11 @@ function CategorySummary({ players, viewMode, matchupRows }: { players: RosterPl
   // both canonical keys (ERA, W) and disambiguated keys (HR_B, K_P, etc.)
   const outcomeMap: Record<string, 'W' | 'L' | 'T'> = {}
   for (const row of matchupRows ?? []) {
-    const out = statusToLabel(row.status)
-    outcomeMap[row.category] = out
-    if (row.category_label && row.category_label !== row.category) {
-      outcomeMap[row.category_label] = out
-    }
+    outcomeMap[row.category] = row.outcome
+    outcomeMap[row.categoryLabel] = row.outcome
   }
-  const wCount = (matchupRows ?? []).filter((r) => statusToLabel(r.status) === 'W').length
-  const lCount = (matchupRows ?? []).filter((r) => statusToLabel(r.status) === 'L').length
+  const wCount = (matchupRows ?? []).filter((r) => r.outcome === 'W').length
+  const lCount = (matchupRows ?? []).filter((r) => r.outcome === 'L').length
 
   // ── RoS mode: cat_scores are z-scores (DB: "Dict of category -> z-score")
   // Sum counting-cat z-scores across starters; average rate-cat z-scores.
@@ -515,17 +512,81 @@ function CategorySummary({ players, viewMode, matchupRows }: { players: RosterPl
 // ───────────────────────────────────────────────────────────────────────────
 // Matchup Strip — current week category-by-category vs opponent
 // ───────────────────────────────────────────────────────────────────────────
+//
+// FIX 1 (2026-07-10): Roster and War Room now share the same matchup endpoint.
+// Changed from /api/fantasy/scoreboard (fragile, produced 0-0-18T) to
+// /api/fantasy/matchup (proven working). Both pages now use identical data source.
 
-function statusToLabel(status: string | null): 'W' | 'L' | 'T' {
-  if (!status) return 'T'
-  if (status.includes('win')) return 'W'
-  if (status.includes('loss')) return 'L'
-  return 'T'
+const ALL_SCORING_CATS: RotoCategory[] = [...BATTER_CATEGORIES, ...PITCHER_CATEGORIES]
+
+function toNum(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined || v === '' || v === '-') return null
+  const n = Number(v)
+  return isFinite(n) ? n : null
 }
 
-function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
-  const { opponent_name, categories_won, categories_lost, categories_tied, overall_win_probability, rows } = scoreboard
-  const winPct = overall_win_probability != null ? Math.round(overall_win_probability * 100) : null
+interface MatchupRow {
+  category: RotoCategory
+  categoryLabel: string
+  isLowerBetter: boolean
+  myCurrent: number | null
+  oppCurrent: number | null
+  outcome: 'W' | 'L' | 'T'
+}
+
+function buildMatchupRows(data: MatchupResponse): { rows: MatchupRow[]; won: number; lost: number; tied: number } {
+  const rows: MatchupRow[] = []
+  let won = 0, lost = 0, tied = 0
+
+  for (const cat of ALL_SCORING_CATS) {
+    const myVal = toNum(data.my_team.stats[cat])
+    const oppVal = toNum(data.opponent.stats[cat])
+    const isLowerBetter = LOWER_IS_BETTER.includes(cat)
+
+    let outcome: 'W' | 'L' | 'T' = 'T'
+    if (myVal !== null && oppVal !== null && myVal !== oppVal) {
+      if (isLowerBetter ? myVal < oppVal : myVal > oppVal) {
+        outcome = 'W'
+        won++
+      } else {
+        outcome = 'L'
+        lost++
+      }
+    } else {
+      tied++
+    }
+
+    rows.push({
+      category: cat,
+      categoryLabel: formatCat(cat),
+      isLowerBetter,
+      myCurrent: myVal,
+      oppCurrent: oppVal,
+      outcome,
+    })
+  }
+
+  return { rows, won, lost, tied }
+}
+
+function MatchupStrip({ matchup }: { matchup: MatchupResponse | null }) {
+  if (!matchup) {
+    return (
+      <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
+        <div className="flex items-center gap-2 text-text-muted">
+          <Swords className="h-3.5 w-3.5" />
+          <span className="text-xs">Loading matchup data…</span>
+        </div>
+      </div>
+    )
+  }
+
+  const { rows, won, lost, tied } = buildMatchupRows(matchup)
+  const opponentName = matchup.opponent.team_name || 'Opponent'
+  const total = won + lost + tied
+
+  // Estimate win probability from category wins (simple heuristic)
+  const winPct = total > 0 ? Math.round((won / total) * 100) : null
 
   return (
     <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
@@ -533,17 +594,17 @@ function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
         <div className="flex items-center gap-2">
           <Swords className="h-3.5 w-3.5 text-accent-gold" />
           <p className="text-xs font-semibold tracking-widest uppercase text-text-secondary">
-            This Week · vs {opponent_name}
+            This Week · vs {opponentName}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-text-muted uppercase tracking-wider">Category W-L</span>
-            <span className="text-xs font-bold text-status-safe">{categories_won}W</span>
+            <span className="text-xs font-bold text-status-safe">{won}W</span>
             <span className="text-[10px] text-text-muted">·</span>
-            <span className="text-xs font-bold text-status-lost">{categories_lost}L</span>
+            <span className="text-xs font-bold text-status-lost">{lost}L</span>
             <span className="text-[10px] text-text-muted">·</span>
-            <span className="text-xs font-bold text-status-bubble">{categories_tied}T</span>
+            <span className="text-xs font-bold text-status-bubble">{tied}T</span>
           </div>
           {winPct != null && (
             <span className={cn(
@@ -561,10 +622,7 @@ function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
       {/* Category grid */}
       <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-2">
         {rows.map((row) => {
-          const outcome = statusToLabel(row.status)
-          const my = row.my_current
-          const opp = row.opp_current
-          const lower = row.is_lower_better
+          const { outcome, myCurrent, oppCurrent, isLowerBetter } = row
           const fmtStat = (v: number | null) => {
             if (v === null || v === undefined) return '–'
             if (['AVG', 'OPS'].includes(row.category)) return v.toFixed(3).replace(/^0\./, '.')
@@ -579,14 +637,14 @@ function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
           const outcomeText = outcome === 'W' ? 'text-status-safe' : outcome === 'L' ? 'text-status-lost' : 'text-status-bubble'
 
           // Flip logic for lower-is-better cats so red always = bad for me
-          const myStr = fmtStat(my)
-          const oppStr = fmtStat(opp)
-          const myIsAhead = my !== null && opp !== null && (lower ? my < opp : my > opp)
+          const myStr = fmtStat(myCurrent)
+          const oppStr = fmtStat(oppCurrent)
+          const myIsAhead = myCurrent !== null && oppCurrent !== null && (isLowerBetter ? myCurrent < oppCurrent : myCurrent > oppCurrent)
 
           return (
             <div key={row.category} className={cn('rounded p-1.5 border text-center', outcomeBg)}>
               <p className="text-[9px] text-text-secondary uppercase tracking-wider leading-none mb-1">
-                {row.category_label || formatCat(row.category)}
+                {row.categoryLabel}
               </p>
               <div className={cn('text-[10px] font-bold leading-none', outcomeText)}>
                 {outcome}
@@ -895,9 +953,9 @@ export default function RosterPage() {
     staleTime: 10 * 60_000,
   })
 
-  const scoreboard = useQuery({
-    queryKey: ['scoreboard'],
-    queryFn: endpoints.getScoreboard,
+  const matchup = useQuery({
+    queryKey: ['matchup'],
+    queryFn: endpoints.getMatchup,
     staleTime: 5 * 60_000,
     retry: 1,
   })
@@ -1201,7 +1259,7 @@ export default function RosterPage() {
       )}
 
       {/* Matchup context strip — most urgent this-week context first */}
-      {scoreboard.isLoading ? (
+      {matchup.isLoading ? (
         <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -1219,27 +1277,28 @@ export default function RosterPage() {
             ))}
           </div>
         </div>
-      ) : scoreboard.error ? (
+      ) : matchup.error ? (
         <div className="bg-status-lost/10 border border-status-lost/30 rounded-lg p-4 flex items-center gap-2">
           <AlertCircle className="h-4 w-4 text-status-lost" />
           <span className="text-sm text-status-lost">
-            Failed to load matchup data: {scoreboard.error?.message ?? 'Unknown error'}
+            Failed to load matchup data: {matchup.error?.message ?? 'Unknown error'}
           </span>
         </div>
-      ) : scoreboard.data ? (
-        <MatchupStrip scoreboard={scoreboard.data} />
+      ) : matchup.data ? (
+        <MatchupStrip matchup={matchup.data} />
       ) : null}
 
       {/* Losing categories callout — action bridge to waiver wire */}
-      {scoreboard.data && (() => {
-        const losers = scoreboard.data!.rows.filter((r) => statusToLabel(r.status) === 'L')
+      {matchup.data && (() => {
+        const { rows } = buildMatchupRows(matchup.data!)
+        const losers = rows.filter((r) => r.outcome === 'L')
         if (losers.length === 0) return null
         return (
           <div className="flex items-center gap-2 flex-wrap bg-status-lost/5 border border-status-lost/20 rounded-lg px-3 py-2">
             <span className="text-[10px] font-bold text-status-lost uppercase tracking-wider flex-shrink-0">Losing:</span>
             {losers.map((r) => (
               <span key={r.category} className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 border border-status-lost/30 rounded text-status-lost font-bold">
-                {r.category_label || formatCat(r.category)}
+                {r.categoryLabel}
               </span>
             ))}
             <a href="/war-room/waiver" className="ml-auto text-[10px] text-text-secondary hover:text-text-primary underline flex-shrink-0">
@@ -1250,7 +1309,7 @@ export default function RosterPage() {
       })()}
 
       {/* Category summary — stats tiles with W/L matchup overlay */}
-      <CategorySummary players={data.players} viewMode={viewMode} matchupRows={scoreboard.data?.rows} />
+      <CategorySummary players={data.players} viewMode={viewMode} matchupRows={matchup.data ? buildMatchupRows(matchup.data).rows : undefined} />
 
       {/* Budget panel */}
       {budget.data && <BudgetPanel budget={budget.data.budget} />}
