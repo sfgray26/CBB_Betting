@@ -4162,6 +4162,7 @@ async def get_fantasy_roster(
 async def move_roster_player(
     req: Request,
     request: RosterMoveRequest,
+    user: str = Depends(verify_api_key),
 ):
     """
     Move a player to a new roster slot.
@@ -4553,6 +4554,7 @@ async def move_roster_player(
 @router.post("/api/fantasy/roster/bulk-apply", response_model=BulkRosterMoveResponse)
 async def bulk_apply_roster_moves(
     request: BulkRosterMoveRequest,
+    user: str = Depends(verify_api_key),
 ):
     """
     Apply multiple roster moves atomically via a single set_lineup call.
@@ -5319,6 +5321,11 @@ async def optimize_roster(
             "current_position": p.get("selected_position", "BN"),
             "lineup_score": score,
             "score_source": score_source,
+            # FIX 2 (2026-07-10): Align with dashboard coverage classification.
+            # is_fallback is True ONLY for _projection_fallback_score (board projections).
+            # Players found via corruption workaround (find_alternative_player_score)
+            # have score_source="player_scores" and is_fallback=False.
+            # This aligns with dashboard which counts covered_workaround as "covered".
             "is_fallback": score_source == "projection_fallback",
         })
 

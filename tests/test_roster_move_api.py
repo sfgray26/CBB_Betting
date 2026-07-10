@@ -13,9 +13,14 @@ def fantasy_client():
     with patch("backend.schedulers.fantasy_scheduler.start_fantasy_scheduler"):
         with patch("backend.schedulers.fantasy_scheduler.stop_fantasy_scheduler"):
             from backend.fantasy_app import app
+            from backend.auth import verify_api_key
             from fastapi.testclient import TestClient
-            with TestClient(app) as client:
-                yield client
+            app.dependency_overrides[verify_api_key] = lambda: "test_user"
+            try:
+                with TestClient(app) as client:
+                    yield client
+            finally:
+                app.dependency_overrides.pop(verify_api_key, None)
 
 
 class TestRosterMoveEndpoint:
