@@ -313,6 +313,39 @@ class TestRosterMoveEndpoint:
         data = response.json()
         assert data["success"] is True
 
+    def test_out_player_without_il_designation_can_remain_active(self, fantasy_client):
+        """OUT/injury notes are not Yahoo IL designations for mutation validation."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.12345",
+                "name": "Unavailable Pitcher",
+                "team": "HOU",
+                "positions": ["SP"],
+                "selected_position": "SP",
+                "status": "OUT",
+                "injury_note": "Shoulder",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+        mock_client.set_lineup.return_value = {
+            "applied": ["469.l.72586.p.12345"],
+            "skipped": [],
+            "warnings": [],
+        }
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={
+                    "player_key": "469.l.72586.p.12345",
+                    "target_position": "SP",
+                },
+            )
+
+        assert response.status_code == 200
+
     def test_ineligible_position_returns_400(self, fantasy_client):
         """Moving a player to a slot they're not eligible for returns 400."""
         mock_roster = [
@@ -615,3 +648,33 @@ class TestBulkRosterMoveEndpoint:
         detail = response.json()["detail"]
         assert "errors" in detail
         assert any("IL designation" in e for e in detail["errors"])
+
+    def test_bulk_apply_allows_out_and_injury_notes_in_active_slots(self, fantasy_client):
+        """Bulk validation does not confuse OUT/body-part notes with IL designations."""
+        roster = self._MOCK_ROSTER + [
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Unavailable Pitcher",
+                "team": "ATL",
+                "positions": ["SP"],
+                "selected_position": "SP",
+                "status": "OUT",
+                "injury_note": "Shoulder",
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = roster
+        mock_client.set_lineup.return_value = {
+            "applied": ["469.l.72586.p.11111"],
+            "skipped": [],
+            "warnings": [],
+        }
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/bulk-apply",
+                json={"moves": [{"player_key": "469.l.72586.p.11111", "target_position": "1B"}]},
+            )
+
+        assert response.status_code == 200

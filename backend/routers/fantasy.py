@@ -5662,7 +5662,7 @@ _EXEMPT_SLOTS = frozenset({"BN", "IL", "IL60"})
 
 
 def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = None) -> bool:
-    """Return True if player has an active IL designation or injury status.
+    """Return True if player has an active Yahoo IL/DL/NA designation.
 
     Checks THREE sources:
     1. player["status"] - Yahoo roster slot (IL, IL10, IL15, IL60)
@@ -5670,8 +5670,11 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
     3. injury_overlay.status - DB injury overlay (60-Day IL, 15-Day IL, etc.)
 
     Matches: "IL", "IL10", "IL15", "IL60", "10-Day IL", "15-Day IL", "60-Day IL",
-             "NA", "OUT", "BEREAVEMENT", "DTD", "DL", AND injury body parts
-             (Shoulder, Elbow, Knee, Back, etc. - any non-Day-to-Day injury excludes player).
+             "NA", and "DL".
+
+    Does NOT treat OUT, DTD/probable, suspended, bereavement, or generic injury
+    body-part notes as IL designations. Those may affect optimizer scoring or
+    warnings elsewhere, but they do not mean Yahoo requires an IL/IL60 slot.
 
     IMPORTANT: Does NOT match position names like "Util" (contains "il" but is a position).
     Does NOT match team names containing "IL" (e.g., "IL" in "Philadelphia").
@@ -5686,7 +5689,7 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
         "10-DAY", "15-DAY", "60-DAY", "10DAY", "15DAY", "60DAY",
         "10 DAY", "15 DAY", "60 DAY",
         "DL", "DL10", "DL15", "DL60", "DL-10", "DL-15", "DL-60",
-        "NA", "OUT", "BEREAVEMENT", "SUSPENDED", "OBSERVATION",
+        "NA",
     })
 
     # Body parts and general injury terms that indicate IL (not Day-to-Day)
@@ -5760,8 +5763,6 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
         status_str = str(raw_status)
         if _contains_il_keyword(status_str):
             return True
-        if _contains_injury_term(status_str):
-            return True
 
     # Check 2: player["injury_note"] (Yahoo injury description)
     raw_note = player.get("injury_note")
@@ -5769,15 +5770,11 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
         note_str = str(raw_note)
         if _contains_il_keyword(note_str):
             return True
-        if _contains_injury_term(note_str):
-            return True
 
     # Check 3: injury_overlay.status (DB injury overlay)
     if injury_overlay is not None and injury_overlay.status:
         overlay_str = str(injury_overlay.status)
         if _contains_il_keyword(overlay_str):
-            return True
-        if _contains_injury_term(overlay_str):
             return True
 
     # Defensive: handle boolean status values (data corruption/API change)
