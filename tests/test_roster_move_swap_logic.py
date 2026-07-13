@@ -131,7 +131,9 @@ class TestRosterMoveSwapLogic:
                 "player_key": "469.p.22222",  # Player B (occupying SS)
                 "name": "Player B",
                 "team": "BOS",
-                "positions": ["SS"],
+                # Must be eligible for the vacated 1B slot — an ineligible swap
+                # partner is redirected to BN by swap-partner validation.
+                "positions": ["SS", "1B"],
                 "selected_position": "SS",
                 "status": "playing",
             },

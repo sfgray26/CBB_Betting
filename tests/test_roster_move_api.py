@@ -397,6 +397,323 @@ class TestRosterMoveEndpoint:
                     assert False, f"Position {pos} was rejected as invalid"
 
 
+class TestMoveThreeLayerValidation:
+    """Regression tests for the IL guard failure (Crochet→SP) and swap-bump bug (Soroka)."""
+
+    @staticmethod
+    def _client_for(roster):
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = roster
+        mock_client.set_lineup.return_value = {
+            "applied": [p["player_key"] for p in roster],
+            "skipped": [],
+            "warnings": [],
+        }
+        return mock_client
+
+    @staticmethod
+    def _lineup_positions(mock_client):
+        """Extract {player_key: position} from the set_lineup call payload."""
+        lineup = mock_client.set_lineup.call_args.kwargs.get("lineup")
+        if lineup is None:
+            lineup = mock_client.set_lineup.call_args.args[-1]
+        return {e["player_key"]: e["position"] for e in lineup}
+
+    # ── Layer 1: source player ───────────────────────────────────────────────
+
+    def test_move_il_player_to_active_blocked(self, fantasy_client):
+        """IL-designated (via status) player cannot be moved to an active slot."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Garrett Crochet",
+                "team": "BOS",
+                "positions": ["SP"],
+                "selected_position": "IL60",
+                "status": "60-Day-IL",
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.44444", "target_position": "SP"},
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "Cannot move" in detail
+        assert "IL" in detail
+        mock_client.set_lineup.assert_not_called()
+
+    def test_move_il_player_with_null_status_to_active_blocked(self, fantasy_client):
+        """Regression (Bug 1): Yahoo returns status=None for IL players — the IL slot
+        itself must be treated as the IL designation."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Garrett Crochet",
+                "team": "BOS",
+                "positions": ["SP"],
+                "selected_position": "IL60",
+                "status": None,
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.44444", "target_position": "SP"},
+            )
+
+        assert response.status_code == 400
+        assert "Cannot move" in response.json()["detail"]
+        mock_client.set_lineup.assert_not_called()
+
+    def test_move_il_player_to_bn_allowed(self, fantasy_client):
+        """IL-designated players may be parked on BN (that's where Yahoo puts them pre-IL)."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Garrett Crochet",
+                "team": "BOS",
+                "positions": ["SP"],
+                "selected_position": "IL60",
+                "status": "IL60",
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.44444", "target_position": "BN"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+    # ── Layer 2: target slot ─────────────────────────────────────────────────
+
+    def test_move_active_player_to_full_il_blocked(self, fantasy_client):
+        """Moving a player to IL when all IL slots are occupied returns 400."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.11111",
+                "name": "Healthy Hitter",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "BN",
+            },
+        ] + [
+            {
+                "player_key": f"469.l.72586.p.7777{i}",
+                "name": f"IL Occupant {i}",
+                "team": "NYM",
+                "positions": ["RP"],
+                "selected_position": slot,
+                "status": "IL60",
+            }
+            for i, slot in enumerate(["IL", "IL", "IL60"])
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.11111", "target_position": "IL"},
+            )
+
+        assert response.status_code == 400
+        assert "IL slot full" in response.json()["detail"]
+        mock_client.set_lineup.assert_not_called()
+
+    def test_move_healthy_player_to_il_with_space_allowed(self, fantasy_client):
+        """Moving a player to IL when a slot is free succeeds."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.11111",
+                "name": "Healthy Hitter",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "BN",
+            },
+            {
+                "player_key": "469.l.72586.p.88888",
+                "name": "Michael Soroka",
+                "team": "WSH",
+                "positions": ["SP", "RP"],
+                "selected_position": "IL",
+                "status": "IL15",
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.11111", "target_position": "IL"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+    # ── Layer 3: swap partner ────────────────────────────────────────────────
+
+    def test_move_to_il_never_bumps_il_occupant(self, fantasy_client):
+        """Regression (Bug 2): reverting an IL player back to IL must NOT displace
+        another IL player (Soroka) out of the IL slot — IL is multi-occupancy."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Garrett Crochet",
+                "team": "BOS",
+                "positions": ["SP"],
+                "selected_position": "SP",  # corrupted state from Bug 1
+                "status": "IL60",
+            },
+            {
+                "player_key": "469.l.72586.p.88888",
+                "name": "Michael Soroka",
+                "team": "WSH",
+                "positions": ["SP", "RP"],
+                "selected_position": "IL",
+                "status": "IL15",
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.44444", "target_position": "IL"},
+            )
+
+        assert response.status_code == 200
+        positions = self._lineup_positions(mock_client)
+        assert positions["469.l.72586.p.44444"] == "IL"
+        assert positions["469.l.72586.p.88888"] == "IL"  # Soroka untouched
+
+    def test_move_to_bn_never_bumps_bench_occupant(self, fantasy_client):
+        """BN is multi-occupancy — moving a player to BN must not promote a bench player."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.11111",
+                "name": "Active Hitter",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+            {
+                "player_key": "469.l.72586.p.22222",
+                "name": "Bench Hitter",
+                "team": "BOS",
+                "positions": ["1B"],
+                "selected_position": "BN",
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.11111", "target_position": "BN"},
+            )
+
+        assert response.status_code == 200
+        positions = self._lineup_positions(mock_client)
+        assert positions["469.l.72586.p.11111"] == "BN"
+        assert positions["469.l.72586.p.22222"] == "BN"  # not promoted to 1B
+
+    def test_swap_into_active_slot_still_bumps_occupant(self, fantasy_client):
+        """Single-occupancy active slots keep the swap behavior (occupant → BN)."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.11111",
+                "name": "Bench Hitter",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "BN",
+            },
+            {
+                "player_key": "469.l.72586.p.22222",
+                "name": "Current First Baseman",
+                "team": "BOS",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.11111", "target_position": "1B"},
+            )
+
+        assert response.status_code == 200
+        positions = self._lineup_positions(mock_client)
+        assert positions["469.l.72586.p.11111"] == "1B"
+        assert positions["469.l.72586.p.22222"] == "BN"
+
+    def test_swap_partner_with_il_designation_goes_to_bn_not_active(self, fantasy_client):
+        """An IL-designated occupant of an active slot (corrupted state) must be
+        displaced to BN, never into another active slot."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.11111",
+                "name": "Healthy Pitcher",
+                "team": "NYY",
+                "positions": ["SP", "RP"],
+                "selected_position": "SP",
+            },
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Garrett Crochet",
+                "team": "BOS",
+                "positions": ["SP", "RP"],
+                "selected_position": "RP",  # corrupted state from Bug 1
+                "status": "IL60",
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.11111", "target_position": "RP"},
+            )
+
+        assert response.status_code == 200
+        positions = self._lineup_positions(mock_client)
+        assert positions["469.l.72586.p.11111"] == "RP"
+        assert positions["469.l.72586.p.44444"] == "BN"  # NOT swapped into SP
+
+    def test_valid_move_allowed(self, fantasy_client):
+        """Healthy bench player into an open Util slot succeeds."""
+        roster = [
+            {
+                "player_key": "469.l.72586.p.11111",
+                "name": "Healthy Hitter",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "BN",
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.11111", "target_position": "Util"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Bulk Apply Endpoint
 # ─────────────────────────────────────────────────────────────────────────────
@@ -648,6 +965,130 @@ class TestBulkRosterMoveEndpoint:
         detail = response.json()["detail"]
         assert "errors" in detail
         assert any("IL designation" in e for e in detail["errors"])
+
+    def test_bulk_apply_il_null_status_in_il_slot_to_active_blocked(self, fantasy_client):
+        """Regression: Yahoo returns status=None for IL players — slot must be the fallback signal."""
+        il_roster = self._MOCK_ROSTER + [
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Garrett Crochet",
+                "team": "BOS",
+                "positions": ["SP"],
+                "selected_position": "IL60",
+                "status": None,
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = il_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/bulk-apply",
+                json={
+                    "moves": [
+                        {"player_key": "469.l.72586.p.44444", "target_position": "SP"},
+                    ]
+                },
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert any("Cannot move" in e and "IL" in e for e in detail["errors"])
+        mock_client.set_lineup.assert_not_called()
+
+    def test_bulk_apply_healthy_to_full_il_blocked(self, fantasy_client):
+        """Bulk move of a player into IL when all IL slots are occupied triggers 400."""
+        full_il_roster = self._MOCK_ROSTER + [
+            {
+                "player_key": f"469.l.72586.p.7777{i}",
+                "name": f"IL Occupant {i}",
+                "team": "NYM",
+                "positions": ["RP"],
+                "selected_position": slot,
+                "status": "IL60",
+            }
+            for i, slot in enumerate(["IL", "IL", "IL60"])
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = full_il_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/bulk-apply",
+                json={
+                    "moves": [
+                        {"player_key": "469.l.72586.p.11111", "target_position": "IL"},
+                    ]
+                },
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert any("IL slot full" in e for e in detail["errors"])
+        mock_client.set_lineup.assert_not_called()
+
+    def test_bulk_apply_il_rotation_within_batch_allowed(self, fantasy_client):
+        """A batch that vacates an IL slot and fills it in the same call is legal."""
+        roster = self._MOCK_ROSTER + [
+            {
+                "player_key": "469.l.72586.p.44444",
+                "name": "Garrett Crochet",
+                "team": "BOS",
+                "positions": ["SP"],
+                "selected_position": "IL60",
+                "status": "IL60",
+            },
+            {
+                "player_key": "469.l.72586.p.55555",
+                "name": "IL Occupant A",
+                "team": "NYM",
+                "positions": ["RP"],
+                "selected_position": "IL",
+                "status": "IL15",
+            },
+            {
+                "player_key": "469.l.72586.p.66666",
+                "name": "IL Occupant B",
+                "team": "NYM",
+                "positions": ["RP"],
+                "selected_position": "IL",
+                "status": "IL15",
+            },
+            {
+                "player_key": "469.l.72586.p.88888",
+                "name": "Michael Soroka",
+                "team": "WSH",
+                "positions": ["SP", "RP"],
+                "selected_position": "BN",
+                "status": "IL15",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = roster
+        mock_client.set_lineup.return_value = {
+            "applied": ["469.l.72586.p.44444", "469.l.72586.p.88888"],
+            "skipped": [],
+            "warnings": [],
+        }
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/bulk-apply",
+                json={
+                    "moves": [
+                        # IL full (3/3): Crochet vacates IL60→BN, Soroka fills IL
+                        {"player_key": "469.l.72586.p.44444", "target_position": "BN"},
+                        {"player_key": "469.l.72586.p.88888", "target_position": "IL"},
+                    ]
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["applied_count"] == 2
 
     def test_bulk_apply_allows_out_and_injury_notes_in_active_slots(self, fantasy_client):
         """Bulk validation does not confuse OUT/body-part notes with IL designations."""

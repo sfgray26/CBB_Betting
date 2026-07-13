@@ -4293,24 +4293,24 @@ async def move_roster_player(
             ),
         ))
 
-    # IL guard: players with an active IL designation cannot be placed in active slots.
-    if _is_il_designated(player_to_move) and request.target_position not in _IL_SLOTS:
+    # Three-layer move validation (IL guard + IL capacity) — must run before any
+    # Yahoo API call. Catches IL players with status=None via their IL slot.
+    _verdict = _validate_move(player_to_move, from_position, request.target_position, raw_players)
+    if not _verdict["valid"]:
         logger.warning(
-            "roster/move: IL designation guard blocked - player=%s status=%s target=%s",
+            "roster/move: validation blocked - player=%s status=%s from=%s target=%s reason=%s",
             player_to_move.get('name', request.player_key),
             player_to_move.get('status'),
-            request.target_position
+            from_position,
+            request.target_position,
+            _verdict["error"],
         )
         return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             from_position=from_position,
             to_position=request.target_position,
-            message=(
-                f"{player_to_move.get('name', request.player_key)} has IL designation "
-                f"({player_to_move.get('status')}) — must be placed in IL or IL60 slot, "
-                f"not {request.target_position!r}"
-            ),
+            message=_verdict["error"],
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
                 fetched_at=None,
@@ -4376,17 +4376,21 @@ async def move_roster_player(
             ))
 
     # Build lineup list: all players with the moved player's position updated
-    # SWAP LOGIC: If target slot is occupied, move the occupant to the source slot
-    # This handles the common case: "move Walker BN→Util" when Util is already filled
+    # SWAP LOGIC: If the target is a single-occupancy active slot and occupied,
+    # move the occupant to the source slot. BN/IL/IL60 hold multiple players, so
+    # moving there must never displace an occupant (bumping an IL player out of
+    # an IL slot corrupts the roster).
     target_slot_occupant = None
-    for p in raw_players:
-        occupant_key = p.get("player_key")
-        occupant_pos = p.get("selected_position", "BN")
-        if occupant_key != request.player_key and occupant_pos == target_position:
-            target_slot_occupant = p
-            break
+    if target_position not in _EXEMPT_SLOTS:
+        for p in raw_players:
+            occupant_key = p.get("player_key")
+            occupant_pos = p.get("selected_position", "BN")
+            if occupant_key != request.player_key and occupant_pos == target_position:
+                target_slot_occupant = p
+                break
 
     lineup = []
+    swap_destination = None  # where the displaced occupant actually landed
     for p in raw_players:
         player_key = p.get("player_key")
         if not player_key:
@@ -4401,7 +4405,21 @@ async def move_roster_player(
         elif target_slot_occupant and player_key == target_slot_occupant.get("player_key"):
             # Move the displaced player to the source slot (swap)
             # If source was BN/IL, displaced player goes to BN; otherwise to source slot
-            swap_target = from_position if from_position and from_position not in ("BN", "IL", "IL60") else "BN"
+            swap_target = from_position if from_position and from_position not in _EXEMPT_SLOTS else "BN"
+            # Swap-partner validation: the occupant may only land in the vacated
+            # slot if they are not IL-designated and are eligible for it — BN is
+            # the safe landing spot otherwise.
+            if swap_target != "BN":
+                _occ_eligible = (
+                    target_slot_occupant.get("eligible_positions")
+                    or target_slot_occupant.get("positions")
+                    or []
+                )
+                if _is_il_designated(target_slot_occupant) or not _can_fill_slot(
+                    _occ_eligible, swap_target, target_slot_occupant.get("name", player_key)
+                ):
+                    swap_target = "BN"
+            swap_destination = swap_target
             lineup.append({
                 "player_key": player_key,
                 "position": swap_target,
@@ -4504,7 +4522,7 @@ async def move_roster_player(
         if target_slot_occupant:
             message = (
                 f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position} "
-                f"(swapped {target_slot_occupant.get('name', target_slot_occupant.get('player_key'))} to {from_position if from_position not in ('BN', 'IL', 'IL60') else 'BN'})"
+                f"(swapped {target_slot_occupant.get('name', target_slot_occupant.get('player_key'))} to {swap_destination or 'BN'})"
             )
         else:
             message = f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position}"
@@ -4611,14 +4629,21 @@ async def bulk_apply_roster_moves(
     if validation_errors:
         raise HTTPException(status_code=400, detail={"errors": validation_errors})
 
-    # Phase 3: IL guard — IL-designated players may only go to IL/IL60 slots
+    # Phase 3: three-layer move validation (IL guard + IL capacity).
+    # IL capacity is evaluated against the batch's projected end-state so a
+    # batch that vacates an IL slot and refills it is not false-blocked.
+    move_targets = {m.player_key: m.target_position for m in request.moves}
+    projected_roster = [
+        {**p, "selected_position": move_targets.get(p.get("player_key"), p.get("selected_position"))}
+        for p in raw_players
+    ]
     for move in request.moves:
         player = roster_by_key.get(move.player_key, {})
-        if _is_il_designated(player) and move.target_position not in _IL_SLOTS:
-            validation_errors.append(
-                f"{player.get('name', move.player_key)} has IL designation "
-                f"({player.get('status')}) — cannot move to {move.target_position!r}"
-            )
+        verdict = _validate_move(
+            player, player.get("selected_position"), move.target_position, projected_roster
+        )
+        if not verdict["valid"]:
+            validation_errors.append(verdict["error"])
 
     if validation_errors:
         raise HTTPException(status_code=400, detail={"errors": validation_errors})
@@ -4817,8 +4842,9 @@ async def bulk_apply_roster_moves(
         player = roster_by_key.get(pk, {})
         # Check if player has IL designation
         if _is_il_designated(player):
-            # IL-designated players can only be in IL/IL60 slots
-            if pos not in _IL_SLOTS:
+            # IL-designated players can only be in IL/IL60/BN slots (BN is where
+            # Yahoo parks them before an IL move — it is not an active slot)
+            if pos not in _EXEMPT_SLOTS:
                 il_in_active.append(f"{player.get('name', pk)} in {pos} slot")
 
     if il_in_active:
@@ -5657,8 +5683,12 @@ _HITTER_POSITIONS = {"C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH"}
 # IL slot names accepted by Yahoo's set_lineup API
 _IL_SLOTS = frozenset({"IL", "IL60"})
 
-# Slots that accept any player regardless of position eligibility
+# Slots that accept any player regardless of position eligibility.
+# These are also multi-occupancy: moving a player here must never displace an occupant.
 _EXEMPT_SLOTS = frozenset({"BN", "IL", "IL60"})
+
+# Combined IL+IL60 capacity (Yahoo standard config; mirrors roster-status il_total)
+_IL_SLOT_CAPACITY = 3
 
 
 def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = None) -> bool:
@@ -5786,6 +5816,70 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
         )
 
     return False
+
+
+def _validate_move(
+    player: dict,
+    source_slot: Optional[str],
+    target_slot: str,
+    roster_state: list,
+) -> dict:
+    """Validate a single roster move before any Yahoo API call.
+
+    Returns {"valid": bool, "error": Optional[str]}.
+
+    Layer 1 — source player: an IL-designated player may only move to IL/IL60/BN.
+    Yahoo sometimes returns status=None for IL players (see the roster parsing
+    note near the recommendations endpoint), so occupying an IL slot counts as
+    an IL designation even without a status string.
+
+    Layer 2 — target slot: IL/IL60 share a combined capacity; a move into a full
+    IL group is blocked. `roster_state` should reflect the positions the move is
+    validated against (for bulk batches, the batch's projected end-state, so a
+    batch that vacates and refills an IL slot is not false-blocked).
+
+    Layer 3 — swap-partner rules live in move_roster_player's swap logic:
+    multi-occupancy slots (BN/IL/IL60) never displace an occupant, and a
+    displaced occupant may only land in the vacated slot if eligible and not
+    IL-designated, otherwise BN.
+    """
+    name = player.get("name") or player.get("player_key") or "player"
+    in_il_slot = source_slot in _IL_SLOTS
+    # IL-slot fallback applies only when Yahoo omitted the status string — a clear
+    # non-IL status in an IL slot is a recovered player being activated, which is legal.
+    raw_status = player.get("status")
+    status_missing = not raw_status or isinstance(raw_status, bool)
+    is_il = _is_il_designated(player) or (in_il_slot and status_missing)
+    designation = player.get("status") or (source_slot if in_il_slot else None) or "IL"
+
+    # Layer 1: IL-designated players cannot enter active slots
+    if is_il and target_slot not in _EXEMPT_SLOTS:
+        return {
+            "valid": False,
+            "error": (
+                f"Cannot move {name} to {target_slot} — player is {designation} "
+                f"(IL designation; allowed slots: IL, IL60, BN)"
+            ),
+        }
+
+    # Layer 2: IL/IL60 targets must have combined capacity
+    if target_slot in _IL_SLOTS:
+        player_key = player.get("player_key")
+        occupants = sum(
+            1 for p in roster_state
+            if p.get("player_key") != player_key
+            and p.get("selected_position") in _IL_SLOTS
+        )
+        if occupants >= _IL_SLOT_CAPACITY:
+            return {
+                "valid": False,
+                "error": (
+                    f"Cannot move {name} to {target_slot} — IL slot full "
+                    f"({occupants}/{_IL_SLOT_CAPACITY})"
+                ),
+            }
+
+    return {"valid": True, "error": None}
 
 
 def _can_fill_slot(eligible_positions, slot, player_name) -> bool:
