@@ -106,6 +106,11 @@ export default function WarRoomPage() {
     onSuccess: (data) => {
       setSimulateData(data)
     },
+    onError: () => {
+      // Drop any stale projection so a failed re-run can't leave a previous
+      // (now untrustworthy) projected record on screen.
+      setSimulateData(undefined)
+    },
   })
 
   const handleSimulate = useCallback(() => {
@@ -166,6 +171,21 @@ export default function WarRoomPage() {
   }
 
   if (!matchup.data) return null
+
+  // Opponent data availability gate (UAT 2026-07-17): when the opponent roster
+  // fails to load (simulate 422, empty team_key, or no usable opponent stats),
+  // the W/L scoreboard must be suppressed — otherwise the UI renders a
+  // fabricated-looking record ("6-0 LEADING") next to its own error banner.
+  const opponentHasStats = Object.values(matchup.data.opponent.stats ?? {}).some((v) => {
+    if (v === null || v === undefined) return false
+    const s = String(v)
+    if (s === '' || s === '-') return false
+    return isFinite(Number(v))
+  })
+  const opponentDataUnavailable =
+    simulateMutation.isError ||
+    !matchup.data.opponent.team_key ||
+    !opponentHasStats
 
   return (
     <div className="min-h-screen bg-bg-base">
@@ -247,8 +267,20 @@ export default function WarRoomPage() {
           </div>
         )}
 
-        <MatchupHeader data={matchup.data} simulate={simulateData} />
-        <CategoryBattlefield data={matchup.data} simulate={simulateData} />
+        <MatchupHeader data={matchup.data} simulate={simulateData} opponentDataUnavailable={opponentDataUnavailable} />
+        {opponentDataUnavailable ? (
+          <div className="bg-bg-surface border border-border-subtle rounded-lg p-6 flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 text-status-bubble flex-shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-text-primary">Category breakdown unavailable</p>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Opponent data failed to load from Yahoo — per-category win/loss is hidden to avoid showing a misleading record.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <CategoryBattlefield data={matchup.data} simulate={simulateData} />
+        )}
       </div>
     </div>
   )

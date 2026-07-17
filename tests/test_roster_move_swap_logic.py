@@ -36,7 +36,7 @@ class TestRosterMoveSwapLogic:
         Moving Player A (BN) → Util when Util is occupied by Player B should:
         1. Move Player A to Util
         2. Move Player B (Util occupant) to BN (source slot)
-        3. Submit complete lineup as single set_lineup call
+        3. Submit a scoped set_lineup payload (moved player + swap partner only)
         4. Return success=True
 
         This prevents Yahoo's "That position has already been filled" error.
@@ -94,7 +94,9 @@ class TestRosterMoveSwapLogic:
         assert data["to_position"] == "Util"
         assert "swapped" in data["message"].lower() or "moved" in data["message"].lower()
 
-        # Verify set_lineup was called with complete lineup (swap)
+        # Verify set_lineup was called with a SCOPED payload (moved + swapped
+        # players only — UAT 2026-07-17: full-lineup submits let a stale roster
+        # cache silently rewrite every player's slot)
         call_args = mock_client.set_lineup.call_args
         lineup = call_args[1]["lineup"]
 
@@ -106,9 +108,9 @@ class TestRosterMoveSwapLogic:
         montgomery_slot = next((p["position"] for p in lineup if p["player_key"] == "469.p.99999"), None)
         assert montgomery_slot == "BN"
 
-        # Other player unchanged
-        other_slot = next((p["position"] for p in lineup if p["player_key"] == "469.p.11111"), None)
-        assert other_slot == "1B"
+        # Other player is NOT in the payload — untouched players are never
+        # submitted, so a single move can never rewrite their slot.
+        assert all(p["player_key"] != "469.p.11111" for p in lineup)
 
     def test_move_into_occupied_active_slot_swaps_to_source_slot(self, fantasy_client):
         """
@@ -217,15 +219,15 @@ class TestRosterMoveSwapLogic:
         data = response.json()
         assert data["success"] is True
 
-        # Verify only Player A moved, Player B unchanged
+        # Verify only Player A is submitted — Player B is untouched and
+        # therefore absent from the scoped payload (UAT 2026-07-17 fix)
         call_args = mock_client.set_lineup.call_args
         lineup = call_args[1]["lineup"]
 
         player_a_slot = next((p["position"] for p in lineup if p["player_key"] == "469.p.11111"), None)
         assert player_a_slot == "1B"
 
-        player_b_slot = next((p["position"] for p in lineup if p["player_key"] == "469.p.22222"), None)
-        assert player_b_slot == "SS"  # Unchanged
+        assert all(p["player_key"] != "469.p.22222" for p in lineup)  # Player B not submitted
 
     def test_move_from_il_to_occupied_slot_swaps_to_bn(self, fantasy_client):
         """

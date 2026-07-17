@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BulkRosterMove, BulkRosterMoveResponse, BudgetData, MatchupResponse, RosterResponse, RotoCategory } from '@/lib/types'
-import { CATEGORY_COLOR, BATTER_CATEGORIES, PITCHER_CATEGORIES, LOWER_IS_BETTER } from '@/lib/types'
+import { CATEGORY_COLOR, BATTER_CATEGORIES, PITCHER_CATEGORIES, LOWER_IS_BETTER, evaluateCategoryOutcome } from '@/lib/types'
 import {
   Users,
   Loader2,
@@ -543,18 +543,11 @@ function buildMatchupRows(data: MatchupResponse): { rows: MatchupRow[]; won: num
     const oppVal = toNum(data.opponent.stats[cat])
     const isLowerBetter = LOWER_IS_BETTER.includes(cat)
 
-    let outcome: 'W' | 'L' | 'T' = 'T'
-    if (myVal !== null && oppVal !== null && myVal !== oppVal) {
-      if (isLowerBetter ? myVal < oppVal : myVal > oppVal) {
-        outcome = 'W'
-        won++
-      } else {
-        outcome = 'L'
-        lost++
-      }
-    } else {
-      tied++
-    }
+    // Shared evaluator (lib/types) — identical verdicts on every page.
+    const outcome = evaluateCategoryOutcome(cat, myVal, oppVal) ?? 'T'
+    if (outcome === 'W') won++
+    else if (outcome === 'L') lost++
+    else tied++
 
     rows.push({
       category: cat,
@@ -1022,23 +1015,35 @@ export default function RosterPage() {
       // Return context with the previous value for rollback
       return { previousRoster }
     },
-    onSuccess: (data: RosterMoveResponse) => {
-      console.log('[Roster Move] onSuccess:', data)
-      const successMessage = data.message || 'Move completed successfully'
-      console.log('[Roster Move] Setting success banner:', successMessage)
+    onSuccess: (data: RosterMoveResponse, variables) => {
+      // Build the confirmation from the mutation variables (the player the user
+      // actually clicked), never blindly from the backend message — UAT 2026-07-17
+      // showed a banner for a completely different, unaffected player.
+      const rosterCache = queryClient.getQueryData<RosterResponse>(['roster'])
+      const playerName =
+        rosterCache?.players.find((p) => p.yahoo_player_key === variables.playerId)?.player_name
+        ?? variables.playerId
+
+      if (!data.success || data.player_key !== variables.playerId) {
+        // Backend rejected the move or answered for a different player — surface
+        // an error instead of a false confirmation.
+        console.error('[Roster Move] Mismatched/failed response:', data, 'for variables:', variables)
+        setMoveSuccess(null)
+        setMoveError(data.message || `Failed to move ${playerName} to ${variables.toSlot}`)
+        void queryClient.invalidateQueries({ queryKey: ['roster'] })
+        return
+      }
+
       setMoveError(null)
-      setMoveSuccess(successMessage)
-      console.log('[Roster Move] Success banner state set')
+      setMoveSuccess(`Moved ${playerName} to ${variables.toSlot}`)
       // Invalidate and refetch to ensure we get fresh data, not stale cache
       // This forces a network request even if the query has a long staleTime
       void queryClient.invalidateQueries({ queryKey: ['roster'] }).then(() => {
         // After invalidation completes, refetch from network
-        console.log('[Roster Move] Invalidated roster queries, now refetching')
         return queryClient.refetchQueries({ queryKey: ['roster'] })
       })
       // Clear success message after 4 seconds
       setTimeout(() => {
-        console.log('[Roster Move] Clearing success banner')
         setMoveSuccess(null)
       }, 4000)
     },
@@ -1082,6 +1087,18 @@ export default function RosterPage() {
       setMoveError(`Bulk apply failed: ${err.message}`)
     },
   })
+
+  // Dedicated handler for the Optimize panel's per-player "Apply" button.
+  // Strictly isolated from Apply All: it forwards exactly one (playerKey, slot)
+  // pair to the single-move mutation and never touches bulkApplyMutation state.
+  const handleApplyOptimizerMove = useCallback(
+    (playerKey: string, slot: string) => {
+      setMoveError(null)
+      setMoveSuccess(null)
+      moveMutation.mutate({ playerId: playerKey, toSlot: slot })
+    },
+    [moveMutation],
+  )
 
   const handleApplyAll = useCallback(
     (moves: BulkRosterMove[]) => {
@@ -1250,7 +1267,7 @@ export default function RosterPage() {
       {optimizeResult && (
         <OptimizePanel
           data={optimizeResult}
-          onApplyMove={handleMove}
+          onApplyMove={handleApplyOptimizerMove}
           onApplyAll={handleApplyAll}
           onClose={() => setOptimizeResult(null)}
           isApplying={moveMutation.isPending}

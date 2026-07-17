@@ -440,6 +440,54 @@ export const RATIO_CATEGORIES: RotoCategory[] = ['AVG', 'OPS', 'ERA', 'WHIP', 'K
 export const BATTER_CATEGORIES: BatterCategory[] = ['R', 'H', 'HR_B', 'RBI', 'K_B', 'TB', 'AVG', 'OPS', 'NSB']
 export const PITCHER_CATEGORIES: PitcherCategory[] = ['W', 'L', 'HR_P', 'K_P', 'ERA', 'WHIP', 'K_9', 'QS', 'NSV']
 
+// ─── Unified category outcome evaluation ─────────────────────────────────────
+// Single source of truth for "did I win this category?" — EVERY page (Roster,
+// War Room, Waiver) must use evaluateCategoryOutcome so the same live stats
+// always produce the same W/L verdict (UAT 2026-07-17: batting K showed as a
+// Win on Roster but a Loss on Waiver for the identical 0-vs-2 line).
+
+const ALL_SCORING_SET = new Set<string>([...BATTER_CATEGORIES, ...PITCHER_CATEGORIES])
+
+// Yahoo-variant / display-style category keys → canonical RotoCategory codes.
+// The waiver feed can emit keys like "K(B)" (batter strikeouts) or "HRA".
+export const CATEGORY_KEY_ALIASES: Record<string, RotoCategory> = {
+  'K(B)': 'K_B',
+  'K(P)': 'K_P',
+  HRA: 'HR_P',
+  HR: 'HR_B',
+  Ks: 'K_P',
+  'K/9': 'K_9',
+  SB: 'NSB',
+  SV: 'NSV',
+}
+
+/** Normalize a category key (Yahoo-variant or canonical) to its canonical code. */
+export function canonicalCategory(category: string): string {
+  if (ALL_SCORING_SET.has(category)) return category
+  return CATEGORY_KEY_ALIASES[category] ?? category
+}
+
+/** True when a lower value wins the category (K_B, L, HR_P, ERA, WHIP). */
+export function isLowerBetterCategory(category: string): boolean {
+  return (LOWER_IS_BETTER as string[]).includes(canonicalCategory(category))
+}
+
+/**
+ * Evaluate a category matchup. Returns 'W' | 'L' | 'T', or null when either
+ * value is missing (no verdict possible). Works with canonical codes and
+ * Yahoo-variant keys alike.
+ */
+export function evaluateCategoryOutcome(
+  category: string,
+  myVal: number | null | undefined,
+  oppVal: number | null | undefined,
+): 'W' | 'L' | 'T' | null {
+  if (myVal === null || myVal === undefined || oppVal === null || oppVal === undefined) return null
+  if (myVal === oppVal) return 'T'
+  const lowerBetter = isLowerBetterCategory(category)
+  return (lowerBetter ? myVal < oppVal : myVal > oppVal) ? 'W' : 'L'
+}
+
 // Matchup shapes — exactly match backend schemas.py MatchupTeamOut / MatchupResponse
 export interface MatchupTeamOut {
   team_key: string

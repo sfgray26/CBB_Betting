@@ -594,7 +594,9 @@ class TestMoveThreeLayerValidation:
         assert response.status_code == 200
         positions = self._lineup_positions(mock_client)
         assert positions["469.l.72586.p.44444"] == "IL"
-        assert positions["469.l.72586.p.88888"] == "IL"  # Soroka untouched
+        # Scoped payload (UAT 2026-07-17 fix): untouched players are never
+        # submitted, so Soroka cannot be bumped out of his IL slot.
+        assert "469.l.72586.p.88888" not in positions
 
     def test_move_to_bn_never_bumps_bench_occupant(self, fantasy_client):
         """BN is multi-occupancy — moving a player to BN must not promote a bench player."""
@@ -625,7 +627,9 @@ class TestMoveThreeLayerValidation:
         assert response.status_code == 200
         positions = self._lineup_positions(mock_client)
         assert positions["469.l.72586.p.11111"] == "BN"
-        assert positions["469.l.72586.p.22222"] == "BN"  # not promoted to 1B
+        # Scoped payload (UAT 2026-07-17 fix): the bench occupant is not
+        # submitted at all — impossible to promote him by accident.
+        assert "469.l.72586.p.22222" not in positions
 
     def test_swap_into_active_slot_still_bumps_occupant(self, fantasy_client):
         """Single-occupancy active slots keep the swap behavior (occupant → BN)."""

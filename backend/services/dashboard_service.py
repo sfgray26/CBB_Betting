@@ -801,12 +801,19 @@ class DashboardService:
                 
                 if is_injured:
                     injured += 1
-                    
-                    # Determine severity
-                    if status in ("IL", "IL60") or selected_pos in ("IL", "IL60"):
+
+                    # Check if player is already in an IL slot
+                    already_in_il_slot = selected_pos in ("IL", "IL10", "IL15", "IL60")
+
+                    # Determine severity - only recommend IL move if NOT already in IL slot
+                    if already_in_il_slot:
+                        # Player already in IL slot - no action needed
+                        severity = "info"
+                        action = "Monitor status"
+                    elif status in ("IL", "IL60"):
                         severity = "critical"
                         action = "Move to IL slot immediately"
-                    elif status in ("IL10", "IL15") or selected_pos in ("IL10", "IL15"):
+                    elif status in ("IL10", "IL15"):
                         severity = "warning"
                         action = "Consider moving to IL slot"
                     elif status == "DTD":

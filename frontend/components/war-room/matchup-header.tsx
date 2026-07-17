@@ -39,9 +39,11 @@ function computeProjectedScore(simulate: MatchupSimulateResponse) {
 interface Props {
   data: MatchupResponse
   simulate?: MatchupSimulateResponse
+  /** When true, opponent data failed to load — suppress the W/L scoreboard. */
+  opponentDataUnavailable?: boolean
 }
 
-export function MatchupHeader({ data, simulate }: Props) {
+export function MatchupHeader({ data, simulate, opponentDataUnavailable = false }: Props) {
   const { myWins, oppWins } = computeScore(data)
   const leading = myWins > oppWins
   const projScore = simulate ? computeProjectedScore(simulate) : null
@@ -64,24 +66,37 @@ export function MatchupHeader({ data, simulate }: Props) {
           <p className="text-sm text-text-secondary mt-1 uppercase tracking-wide">My Team</p>
         </div>
 
-        {/* Score */}
-        <div className="flex-shrink-0 text-center px-4">
-          <div className="flex items-baseline gap-3">
-            <span className={cn('text-5xl lg:text-6xl font-bold tabular-nums', leading ? 'text-accent-gold' : 'text-text-secondary')}>
-              {myWins}
-            </span>
-            <span className="text-text-muted text-3xl font-light">-</span>
-            <span className={cn('text-5xl lg:text-6xl font-bold tabular-nums', !leading ? 'text-accent-gold' : 'text-text-muted')}>
-              {oppWins}
-            </span>
+        {/* Score — suppressed when opponent data is missing so the UI never
+            renders a fabricated record (UAT 2026-07-17: "6-0 LEADING" shown
+            alongside a "0 opponent players" error). */}
+        {opponentDataUnavailable ? (
+          <div className="flex-shrink-0 text-center px-4 max-w-[240px]">
+            <p className="text-sm font-bold uppercase tracking-wider text-status-bubble">
+              Matchup data unavailable
+            </p>
+            <p className="text-xs text-text-muted mt-1">
+              Opponent data failed to load from Yahoo — score hidden to avoid showing a misleading record.
+            </p>
           </div>
-          <p className={cn(
-            'text-sm mt-2 uppercase tracking-wider font-semibold',
-            myWins === oppWins ? 'text-text-secondary' : leading ? 'text-accent-gold' : 'text-text-secondary'
-          )}>
-            {myWins === oppWins ? 'TIED' : leading ? 'LEADING' : 'TRAILING'}
-          </p>
-        </div>
+        ) : (
+          <div className="flex-shrink-0 text-center px-4">
+            <div className="flex items-baseline gap-3">
+              <span className={cn('text-5xl lg:text-6xl font-bold tabular-nums', leading ? 'text-accent-gold' : 'text-text-secondary')}>
+                {myWins}
+              </span>
+              <span className="text-text-muted text-3xl font-light">-</span>
+              <span className={cn('text-5xl lg:text-6xl font-bold tabular-nums', !leading ? 'text-accent-gold' : 'text-text-muted')}>
+                {oppWins}
+              </span>
+            </div>
+            <p className={cn(
+              'text-sm mt-2 uppercase tracking-wider font-semibold',
+              myWins === oppWins ? 'text-text-secondary' : leading ? 'text-accent-gold' : 'text-text-secondary'
+            )}>
+              {myWins === oppWins ? 'TIED' : leading ? 'LEADING' : 'TRAILING'}
+            </p>
+          </div>
+        )}
 
         {/* Opponent */}
         <div className="flex-1 min-w-0 text-right">
@@ -92,8 +107,8 @@ export function MatchupHeader({ data, simulate }: Props) {
         </div>
       </div>
 
-      {/* Projected record strip */}
-      {projScore && winPct !== null && (
+      {/* Projected record strip — also suppressed when opponent data is missing */}
+      {projScore && winPct !== null && !opponentDataUnavailable && (
         <div className="mt-6 pt-4 border-t border-border-subtle flex items-center justify-between">
           <div className="flex items-center gap-4">
             <span className="text-xs font-semibold tracking-widest uppercase text-text-muted">Projected</span>

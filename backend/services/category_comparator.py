@@ -49,6 +49,22 @@ CATEGORY_DIRECTIONS: Dict[str, str] = {
     "OBP": "higher",         # On-base percentage
     "SLG": "higher",         # Slugging percentage
     "OPS": "higher",         # On-base + slugging
+
+    # Canonical stat-contract codes (backend.stat_contract) and Yahoo display
+    # variants. Without these, unknown keys silently defaulted to
+    # higher-is-better — which flipped batting strikeouts ("K(B)" / "K_B") and
+    # made the Waiver page contradict the Roster page on the same live stat
+    # (UAT 2026-07-17: 0-vs-2 K = Win on Roster, Loss on Waiver).
+    "K_B": "lower",          # Batter strikeouts — lower is better
+    "K(B)": "lower",         # Yahoo display variant of K_B
+    "HR_P": "lower",         # Home runs allowed (canonical code for HRA)
+    "K_P": "higher",         # Pitcher strikeouts (canonical)
+    "K(P)": "higher",        # Yahoo display variant of K_P
+    "HR_B": "higher",        # Batter home runs (canonical)
+    "H": "higher",           # Hits
+    "TB": "higher",          # Total bases
+    "NSB": "higher",         # Net stolen bases
+    "NSV": "higher",         # Net saves
 }
 
 

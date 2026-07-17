@@ -5,6 +5,55 @@
 
 ---
 
+## SESSION LOG — 2026-07-17: UAT Sprint 1 (3 CRITICAL fixes, UNCOMMITTED working tree)
+
+Source: UAT report 2026-07-17 (Week 17). Triage: `UAT_DEV_TRIAGE.md`.
+All changes UNCOMMITTED on `stable/cbb-prod`, awaiting user review before Sprint 2.
+
+**C1 — Optimize "Apply" isolation + truthful toast**
+- `backend/routers/fantasy.py` `move_roster_player`: `set_lineup` payload now
+  scoped to moved player + swap partner only (was: full 22-player lineup built
+  from 5-min roster cache → stale cache could mass-rewrite slots). Roster fetch
+  now `bypass_cache=True`.
+- `frontend/.../war-room/roster/page.tsx`: dedicated `handleApplyOptimizerMove`
+  for the Optimize panel (isolated from Apply All); success banner built from
+  mutation variables + roster cache name, gated on
+  `data.success && data.player_key === variables.playerId`.
+- Tests updated: `tests/test_roster_move_api.py` (2), `tests/test_roster_move_swap_logic.py` (3).
+
+**C2 — War Room fabricated score suppression**
+- `frontend/.../war-room/page.tsx`: `opponentDataUnavailable` gate
+  (simulate error / empty opponent team_key / no usable opponent stats);
+  clears stale `simulateData` on simulate error; CategoryBattlefield fallback.
+- `frontend/components/war-room/matchup-header.tsx`: new
+  `opponentDataUnavailable` prop → renders "Matchup data unavailable" instead
+  of W/L scoreboard + projected strip.
+
+**C3 — Unified category W/L evaluation (K flip bug)**
+- `frontend/lib/types.ts`: new `evaluateCategoryOutcome()`,
+  `isLowerBetterCategory()`, `canonicalCategory()`, `CATEGORY_KEY_ALIASES`
+  (`K(B)`→`K_B`, etc.). Roster `buildMatchupRows` + Waiver `CategoryDeficitsBar`
+  both use it (waiver no longer trusts backend `winning` for display).
+- `backend/services/category_comparator.py`: added canonical/variant direction
+  entries (`K_B`, `K(B)` lower; `K_P`, `K(P)`, `HR_B`, `H`, `TB`, `NSB`, `NSV`
+  higher; `HR_P` lower).
+- `backend/routers/fantasy.py` waiver `category_deficits`: keys canonicalized
+  before `compare_category`; canonical codes emitted.
+
+**Verification:** `py_compile` OK; pytest 152 passed across
+roster-move/comparator/consistency/waiver-gates/IL/matchup/tracker suites;
+`frontend: tsc --noEmit` OK; vitest matchup-strip 4/4. (`streaming-recommendations.test.tsx`
+fails on missing `@testing-library/react` — PRE-EXISTING, untouched.)
+
+**Pre-existing uncommitted changes (NOT this session, preserved):**
+`backend/services/dashboard_service.py` IL-slot alert fix (partial — see
+UAT_DEV_TRIAGE HIGH 1), `frontend/.../waiver/page.tsx` OF filter handling.
+
+**Sprint 2 candidates (awaiting review):** HIGH 1–3 in UAT_DEV_TRIAGE.md +
+UX quick wins.
+
+---
+
 ## Current Mission State
 
 ### P0 Surgical Fixes — Route Shadowing + Mutation Auth ✅ DEPLOYED & VALIDATED (2026-07-10 PM)

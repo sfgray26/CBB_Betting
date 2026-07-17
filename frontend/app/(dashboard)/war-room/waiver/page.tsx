@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import type { WaiverAvailablePlayer, WaiverResponse, WaiverRosterPlayer, WaiverRecommendation, DropPlayerOut, CategoryDelta } from '@/lib/types'
+import { evaluateCategoryOutcome, isLowerBetterCategory } from '@/lib/types'
 import {
   ListFilter, Loader2, AlertCircle, TrendingUp,
   AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
@@ -327,9 +328,19 @@ function CategoryDeficitsBar({ deficits, opponent }: {
   const scored = (deficits ?? []).filter((d) => waiverCatLabel(d.category) !== null)
   if (scored.length === 0) return null
 
-  const wCount = scored.filter((d) => d.winning).length
-  const lCount = scored.filter((d) => !d.winning && d.deficit !== 0).length
-  const tCount = scored.filter((d) => d.deficit === 0).length
+  // Evaluate every category with the SAME shared evaluator the Roster page
+  // uses (lib/types.evaluateCategoryOutcome) — never the backend `winning`
+  // flag, which used a different direction table and flipped batting K
+  // (UAT 2026-07-17: 0-vs-2 K showed W on Roster, L here).
+  const rows = scored.map((d) => ({
+    d,
+    outcome: evaluateCategoryOutcome(d.category, d.my_total, d.opponent_total)
+      ?? (d.deficit === 0 ? 'T' as const : d.winning ? 'W' as const : 'L' as const),
+  }))
+
+  const wCount = rows.filter((r) => r.outcome === 'W').length
+  const lCount = rows.filter((r) => r.outcome === 'L').length
+  const tCount = rows.filter((r) => r.outcome === 'T').length
 
   function fmtVal(catKey: string, val: number): string {
     const label = waiverCatLabel(catKey) ?? catKey
@@ -360,10 +371,11 @@ function CategoryDeficitsBar({ deficits, opponent }: {
       </div>
       {/* Pill grid — mirrors MatchupStrip on roster page for a unified visual language */}
       <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-2">
-        {scored.map((d) => {
+        {rows.map(({ d, outcome }) => {
           const label = waiverCatLabel(d.category) ?? d.category
-          const isLowerBetter = ['ERA', 'WHIP', 'L', 'HRA'].includes(label)
-          const outcome: 'W' | 'L' | 'T' = d.deficit === 0 ? 'T' : d.winning ? 'W' : 'L'
+          // Direction from the same shared helper (handles canonical codes and
+          // Yahoo-variant keys like "K(B)" identically).
+          const isLowerBetter = isLowerBetterCategory(d.category)
           const outcomeBg = outcome === 'W'
             ? 'bg-status-safe/10 border-status-safe/30'
             : outcome === 'L'
@@ -672,6 +684,11 @@ function WaiverPageInner() {
     if (posFilter === 'All') return players
     return players.filter((p) => {
       const positions = p.positions ?? (p.position ? [p.position] : [])
+      // Special handling for 'OF' filter: match any outfield position or UTIL
+      if (posFilter === 'OF') {
+        return positions.some((pos) => ['LF', 'CF', 'RF', 'Util'].includes(pos))
+      }
+      // For other positions, use exact match or prefix match
       return positions.some((pos) => pos === posFilter || pos.startsWith(posFilter))
     })
   }

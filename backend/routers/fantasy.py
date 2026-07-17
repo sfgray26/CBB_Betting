@@ -2042,12 +2042,27 @@ async def get_fantasy_waiver_recommendations(
                 my_stats = _stats_dict_from_raw(my_tuple[2])
                 opp_stats = _stats_dict_from_raw(opp_tuple[2])
 
+                # Canonicalize Yahoo display-variant keys to stat_contract codes
+                # BEFORE comparison so the verdict uses the same direction table
+                # as the Roster/War Room pages (UAT 2026-07-17: "K(B)" fell
+                # through to higher-is-better and flipped batting K to a Loss).
+                _WAIVER_CAT_CANON = {
+                    "K(B)": "K_B",
+                    "K(P)": "K_P",
+                    "HRA": "HR_P",
+                    "HR": "HR_B",
+                    "K/9": "K_9",
+                    "SB": "NSB",
+                    "SV": "NSV",
+                }
+
                 for cat, my_val in my_stats.items():
+                    canon_cat = _WAIVER_CAT_CANON.get(cat, cat)
                     opp_val = opp_stats.get(cat, 0.0)
-                    result = compare_category(cat, my_val, opp_val)
+                    result = compare_category(canon_cat, my_val, opp_val)
                     category_deficits.append(
                         CategoryDeficitOut(
-                            category=cat,
+                            category=canon_cat,
                             my_total=my_val,
                             opponent_total=opp_val,
                             deficit=result.gap,
@@ -4222,7 +4237,9 @@ async def move_roster_player(
 
     try:
         client = get_yahoo_client()
-        raw_players = client.get_roster(team_key=team_key)
+        # bypass_cache: a write operation must see live Yahoo state. Building a
+        # lineup from the 5-minute roster cache can resurrect stale positions.
+        raw_players = client.get_roster(team_key=team_key, bypass_cache=True)
     except YahooAuthError as exc:
         logger.error("roster/move: Yahoo auth error - %s", exc)
         return _cors_response(RosterMoveResponse(
@@ -4375,11 +4392,10 @@ async def move_roster_player(
                 ),
             ))
 
-    # Build lineup list: all players with the moved player's position updated
-    # SWAP LOGIC: If the target is a single-occupancy active slot and occupied,
-    # move the occupant to the source slot. BN/IL/IL60 hold multiple players, so
-    # moving there must never displace an occupant (bumping an IL player out of
-    # an IL slot corrupts the roster).
+    # SWAP DETECTION: If the target is a single-occupancy active slot and occupied,
+    # the occupant must be swapped to the source slot. BN/IL/IL60 hold multiple
+    # players, so moving there must never displace an occupant (bumping an IL
+    # player out of an IL slot corrupts the roster).
     target_slot_occupant = None
     if target_position not in _EXEMPT_SLOTS:
         for p in raw_players:
@@ -4389,55 +4405,48 @@ async def move_roster_player(
                 target_slot_occupant = p
                 break
 
-    lineup = []
+    # Build the set_lineup payload scoped to ONLY the players this move touches.
+    # Previously this submitted all 22 rostered players with their cached
+    # positions, so any drift between the get_roster() cache and Yahoo's live
+    # state was force-written back — a single "Apply" could silently rewrite
+    # every player's slot (UAT 2026-07-17: one click executed all 18 optimizer
+    # moves). Yahoo accepts partial player lists (proven by set_lineup's own
+    # per-player fallback path), so untouched players are never included.
+    lineup = [{
+        "player_key": request.player_key,
+        "position": target_position,  # mapped from OF to LF/CF/RF if needed
+    }]
     swap_destination = None  # where the displaced occupant actually landed
-    for p in raw_players:
-        player_key = p.get("player_key")
-        if not player_key:
-            continue
-
-        if player_key == request.player_key:
-            # Move to target position (mapped from OF to LF/CF/RF if needed)
-            lineup.append({
-                "player_key": player_key,
-                "position": target_position,
-            })
-        elif target_slot_occupant and player_key == target_slot_occupant.get("player_key"):
-            # Move the displaced player to the source slot (swap)
-            # If source was BN/IL, displaced player goes to BN; otherwise to source slot
-            swap_target = from_position if from_position and from_position not in _EXEMPT_SLOTS else "BN"
-            # Swap-partner validation: the occupant may only land in the vacated
-            # slot if they are not IL-designated and are eligible for it — BN is
-            # the safe landing spot otherwise.
-            if swap_target != "BN":
-                _occ_eligible = (
-                    target_slot_occupant.get("eligible_positions")
-                    or target_slot_occupant.get("positions")
-                    or []
-                )
-                if _is_il_designated(target_slot_occupant) or not _can_fill_slot(
-                    _occ_eligible, swap_target, target_slot_occupant.get("name", player_key)
-                ):
-                    swap_target = "BN"
-            swap_destination = swap_target
-            lineup.append({
-                "player_key": player_key,
-                "position": swap_target,
-            })
-            logger.info(
-                "roster/move: SWAP - moving %s from %s to %s to make room for %s",
-                target_slot_occupant.get("name", player_key),
-                target_position,
-                swap_target,
-                request.player_key
+    if target_slot_occupant:
+        occupant_key = target_slot_occupant.get("player_key")
+        # Move the displaced player to the source slot (swap)
+        # If source was BN/IL, displaced player goes to BN; otherwise to source slot
+        swap_target = from_position if from_position and from_position not in _EXEMPT_SLOTS else "BN"
+        # Swap-partner validation: the occupant may only land in the vacated
+        # slot if they are not IL-designated and are eligible for it — BN is
+        # the safe landing spot otherwise.
+        if swap_target != "BN":
+            _occ_eligible = (
+                target_slot_occupant.get("eligible_positions")
+                or target_slot_occupant.get("positions")
+                or []
             )
-        else:
-            # Keep existing position
-            existing_pos = p.get("selected_position", "BN")
-            lineup.append({
-                "player_key": player_key,
-                "position": existing_pos,
-            })
+            if _is_il_designated(target_slot_occupant) or not _can_fill_slot(
+                _occ_eligible, swap_target, target_slot_occupant.get("name", occupant_key)
+            ):
+                swap_target = "BN"
+        swap_destination = swap_target
+        lineup.append({
+            "player_key": occupant_key,
+            "position": swap_target,
+        })
+        logger.info(
+            "roster/move: SWAP - moving %s from %s to %s to make room for %s",
+            target_slot_occupant.get("name", occupant_key),
+            target_position,
+            swap_target,
+            request.player_key
+        )
 
     # Apply the lineup change
     logger.info(
