@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import type { StreamingPitcher } from '@/lib/types'
+import { TIER_LABELS, CONFIDENCE_LABELS, humanizeDataSource } from '@/lib/types'
 import { Loader2, AlertCircle, ChevronDown, ChevronUp, Filter, Play, Sparkles } from 'lucide-react'
 import { FreshnessBadge } from '@/components/freshness/freshness-badge'
 import { ActionModal } from './action-modal'
@@ -223,7 +224,7 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
                   : 'bg-bg-inset text-text-tertiary border-border-subtle hover:border-border-default'
               }`}
             >
-              {tier}
+              {TIER_LABELS[tier] ?? tier}
             </button>
           ))}
           <div className="flex-1" />
@@ -260,7 +261,7 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
           <p className="text-text-secondary text-sm">
             {tierFilter === 'ALL'
               ? 'No 2-start pitchers found for this date range.'
-              : `No pitchers with ${tierFilter} recommendation.`}
+              : `No pitchers with ${TIER_LABELS[tierFilter] ?? tierFilter} recommendation.`}
           </p>
         </div>
       ) : (
@@ -280,7 +281,7 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
 
       {/* Data sources footer */}
       <div className="text-[10px] text-text-muted uppercase tracking-wider">
-        Data sources: {data.data_sources.join(', ')}
+        Data sources: {data.data_sources.map(humanizeDataSource).join(', ')}
       </div>
 
       {/* Action Modal */}
@@ -345,7 +346,7 @@ function StreamingPitcherRow({
                     pitcher.transparency.confidence === 'MEDIUM' ? 'bg-status-bubble/20 text-status-bubble' :
                     'bg-status-lost/20 text-status-lost'
                   }`}>
-                    {pitcher.transparency.confidence}
+                    {CONFIDENCE_LABELS[pitcher.transparency.confidence] ?? pitcher.transparency.confidence}
                   </span>
                 )}
               </div>
@@ -368,7 +369,7 @@ function StreamingPitcherRow({
           {/* Right: Recommendation badge + Execute Add */}
           <div className="flex items-center gap-2">
             <span className={`px-3 py-1.5 rounded-md text-xs font-bold border ${tierColor}`}>
-              {pitcher.recommendation}
+              {TIER_LABELS[pitcher.recommendation] ?? pitcher.recommendation}
             </span>
 
             {/* Execute Add button */}
@@ -451,7 +452,7 @@ function StreamingPitcherRow({
                   </div>
                   {start.is_confirmed && (
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-safe/20 text-status-safe font-semibold">
-                      CONFIRMED
+                      Confirmed
                     </span>
                   )}
                 </div>

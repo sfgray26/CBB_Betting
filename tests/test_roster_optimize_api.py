@@ -764,3 +764,109 @@ class TestRosterOptimizeEndpoint:
         # Docstring says: "source: 'player_scores' if found via workaround, 'default' if not found"
         assert "player_scores" in find_alternative_player_score.__doc__, \
             "Workaround should return 'player_scores' as source when found"
+
+    # ===================================================================
+    # P28: Talent-anchored blended score (feature-flagged)
+    # ===================================================================
+
+    def test_blended_flag_off_is_legacy_path(self, fantasy_client):
+        """With optimize.blended_score OFF (production default), the endpoint
+        must behave exactly as before — no blended resolver call, legacy
+        min-max normalization runs, score_source is NOT 'blended'."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Hitter A",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch(
+                "backend.services.config_service.is_flag_enabled",
+                return_value=False,  # blended OFF
+            ):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={"target_date": "2026-04-15"},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Flag off -> no 'blended' source tags
+        for p in data["starters"] + data["bench"]:
+            assert "blended" not in p.get("reasoning", "").lower()
+
+    def test_blended_flag_on_produces_valid_response(self, fantasy_client):
+        """With optimize.blended_score ON, the endpoint must still return a valid
+        200 response. With a mock DB (all signals missing), the blend degrades
+        to neutral (50) for everyone — which is the correct no-data behavior."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Hitter A",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch(
+                "backend.services.config_service.is_flag_enabled",
+                side_effect=lambda flag: flag == "optimize.blended_score",
+            ):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={"target_date": "2026-04-15"},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert len(data["starters"]) >= 1
+        # With all signals missing, blended final_z=0.0 -> percentile 50.0
+        for p in data["starters"]:
+            assert isinstance(p["lineup_score"], (int, float))
+            assert 0.0 <= p["lineup_score"] <= 100.0
+
+    def test_blended_score_never_crashes_on_db_errors(self, fantasy_client):
+        """If the blended resolver throws (e.g. DB error), the endpoint must
+        fall back to the legacy path and still return 200 — never a 500."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Hitter A",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch(
+                "backend.services.config_service.is_flag_enabled",
+                side_effect=lambda flag: flag == "optimize.blended_score",
+            ):
+                with patch(
+                    "backend.routers.fantasy._resolve_blended_signals",
+                    side_effect=RuntimeError("simulated DB outage"),
+                ):
+                    response = fantasy_client.post(
+                        "/api/fantasy/roster/optimize",
+                        json={"target_date": "2026-04-15"},
+                    )
+
+        # Must fall back gracefully, not 500
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True

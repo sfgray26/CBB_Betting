@@ -497,15 +497,22 @@ class TestMoveThreeLayerValidation:
 
     # ── Layer 2: target slot ─────────────────────────────────────────────────
 
-    def test_move_active_player_to_full_il_blocked(self, fantasy_client):
-        """Moving a player to IL when all IL slots are occupied returns 400."""
+    def test_move_injured_player_to_full_il_blocked(self, fantasy_client):
+        """Moving an INJURED player to IL when all IL slots are occupied returns 400.
+
+        UAT 2026-07-17: capacity is checked only AFTER eligibility. This test
+        uses an injured player so it exercises the capacity path (the only path
+        that yields "IL slot full"). A healthy player would hit the eligibility
+        gate first — see test_move_healthy_player_to_il_blocked.
+        """
         roster = [
             {
                 "player_key": "469.l.72586.p.11111",
-                "name": "Healthy Hitter",
+                "name": "Newly Injured Hitter",
                 "team": "NYY",
                 "positions": ["1B"],
                 "selected_position": "BN",
+                "status": "IL15",  # injured → passes eligibility gate
             },
         ] + [
             {
@@ -530,15 +537,21 @@ class TestMoveThreeLayerValidation:
         assert "IL slot full" in response.json()["detail"]
         mock_client.set_lineup.assert_not_called()
 
-    def test_move_healthy_player_to_il_with_space_allowed(self, fantasy_client):
-        """Moving a player to IL when a slot is free succeeds."""
+    def test_move_injured_player_to_il_with_space_allowed(self, fantasy_client):
+        """Moving an INJURED player to IL when a slot is free succeeds.
+
+        A healthy player moving to IL is blocked by the eligibility gate (see
+        test_move_healthy_player_to_il_blocked). This test uses a DTD player,
+        which the frontend's isILEligible treats as eligible for IL placement.
+        """
         roster = [
             {
                 "player_key": "469.l.72586.p.11111",
-                "name": "Healthy Hitter",
+                "name": "Dinged Hitter",
                 "team": "NYY",
                 "positions": ["1B"],
                 "selected_position": "BN",
+                "status": "DTD",
             },
             {
                 "player_key": "469.l.72586.p.88888",
@@ -559,6 +572,38 @@ class TestMoveThreeLayerValidation:
 
         assert response.status_code == 200
         assert response.json()["success"] is True
+
+    def test_move_healthy_player_to_il_blocked(self, fantasy_client):
+        """A healthy player (no injury designation) cannot be moved to an IL slot.
+
+        UAT 2026-07-17: the backend must check injury eligibility BEFORE slot
+        capacity, returning a clear "not eligible for IL" 400 rather than a
+        misleading "slot full (3/3)" when the IL group happens to be full.
+        """
+        roster = [
+            {
+                "player_key": "469.l.72586.p.11111",
+                "name": "Healthy Hitter",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "BN",
+                # No status, no injury_note, no overlay — fully healthy
+            },
+        ]
+        mock_client = self._client_for(roster)
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={"player_key": "469.l.72586.p.11111", "target_position": "IL"},
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "not eligible for IL" in detail
+        # Eligibility is checked before capacity, so no "slot full" leakage
+        assert "slot full" not in detail
+        mock_client.set_lineup.assert_not_called()
 
     # ── Layer 3: swap partner ────────────────────────────────────────────────
 
@@ -1002,7 +1047,12 @@ class TestBulkRosterMoveEndpoint:
         mock_client.set_lineup.assert_not_called()
 
     def test_bulk_apply_healthy_to_full_il_blocked(self, fantasy_client):
-        """Bulk move of a player into IL when all IL slots are occupied triggers 400."""
+        """Bulk move of a HEALTHY player into IL is blocked at the eligibility gate.
+
+        UAT 2026-07-17: a healthy player moving to IL returns "not eligible for IL"
+        (eligibility checked before capacity), regardless of whether the IL group
+        is full. The old "IL slot full" message only applies to injured players.
+        """
         full_il_roster = self._MOCK_ROSTER + [
             {
                 "player_key": f"469.l.72586.p.7777{i}",
@@ -1024,6 +1074,54 @@ class TestBulkRosterMoveEndpoint:
                 json={
                     "moves": [
                         {"player_key": "469.l.72586.p.11111", "target_position": "IL"},
+                    ]
+                },
+            )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        # Healthy player → eligibility gate fires before capacity
+        assert any("not eligible for IL" in e for e in detail["errors"])
+        assert all("slot full" not in e for e in detail["errors"])
+        mock_client.set_lineup.assert_not_called()
+
+    def test_bulk_apply_injured_to_full_il_blocked(self, fantasy_client):
+        """Bulk move of an INJURED player into a full IL group returns "slot full".
+
+        Capacity check still fires for players who ARE injury-eligible — this is
+        the only path that produces the "IL slot full" message under the new gate.
+        """
+        full_il_roster = self._MOCK_ROSTER + [
+            {
+                "player_key": f"469.l.72586.p.7777{i}",
+                "name": f"IL Occupant {i}",
+                "team": "NYM",
+                "positions": ["RP"],
+                "selected_position": slot,
+                "status": "IL60",
+            }
+            for i, slot in enumerate(["IL", "IL", "IL60"])
+        ] + [
+            {
+                # An injured player not yet in an IL slot — eligible, but IL is full
+                "player_key": "469.l.72586.p.99999",
+                "name": "Newly Injured",
+                "team": "ATL",
+                "positions": ["SP"],
+                "selected_position": "BN",
+                "status": "IL15",
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = full_il_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/bulk-apply",
+                json={
+                    "moves": [
+                        {"player_key": "469.l.72586.p.99999", "target_position": "IL"},
                     ]
                 },
             )

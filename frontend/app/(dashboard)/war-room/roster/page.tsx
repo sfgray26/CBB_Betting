@@ -3,7 +3,8 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BulkRosterMove, BulkRosterMoveResponse, BudgetData, MatchupResponse, RosterResponse, RotoCategory } from '@/lib/types'
+import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BulkRosterMove, BulkRosterMoveResponse, BudgetData, MatchupResponse, RosterResponse, RotoCategory, PlayerSlotAssignment } from '@/lib/types'
+import { TALENT_SOURCE_LABELS, SCORE_SOURCE_LABELS } from '@/lib/types'
 import { CATEGORY_COLOR, BATTER_CATEGORIES, PITCHER_CATEGORIES, LOWER_IS_BETTER, evaluateCategoryOutcome } from '@/lib/types'
 import {
   Users,
@@ -94,9 +95,26 @@ function getStat(values: Record<string, number | null> | undefined, key: string)
 
 function formatCat(code: string): string {
   const labels: Record<string, string> = {
-    HR_B: 'HR', K_B: 'K', K_P: 'K', HR_P: 'HR', K_9: 'K/9', NSB: 'NSB',
+    HR_B: 'HR', K_B: 'K', K_P: 'Ks', HR_P: 'HRA', K_9: 'K/9', NSB: 'NSB',
   }
   return labels[code] ?? code.replace(/_[BP]$/, '')
+}
+
+/**
+ * Check if a player is eligible for IL slot placement based on injury status.
+ * Returns true if the player has an active injury that qualifies for IL/IL60.
+ */
+function isILEligible(player: RosterPlayer): boolean {
+  const injuryStatus = player.injury_status?.toLowerCase() ?? ''
+  const status = player.status?.toLowerCase() ?? ''
+
+  // Injury statuses that qualify for IL placement
+  const ilQualifyingStatuses = ['il', 'il15', 'il60', 'dtd', 'out', 'na', 'day-to-day', 'injured', 'questionable']
+
+  // Check if injury_status or status contains any qualifying term
+  return ilQualifyingStatuses.some(term =>
+    injuryStatus.includes(term) || status.includes(term)
+  )
 }
 
 function rosValueScore(player: RosterPlayer): number {
@@ -243,13 +261,19 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
         {/* IL */}
         <div>
           <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">IL Slots</p>
-          <p className="text-sm font-bold text-text-primary tabular-nums">
-            {budget.il_used}<span className="text-text-muted font-normal">/{budget.il_total}</span>
-          </p>
-          {budget.il_used < budget.il_total && (
-            <p className="text-[10px] text-status-safe font-semibold mt-0.5">
-              {budget.il_total - budget.il_used} open
-            </p>
+          {(budget.il_data_available ?? false) ? (
+            <>
+              <p className="text-sm font-bold text-text-primary tabular-nums">
+                {budget.il_used}<span className="text-text-muted font-normal">/{budget.il_total}</span>
+              </p>
+              {budget.il_used < budget.il_total && (
+                <p className="text-[10px] text-status-safe font-semibold mt-0.5">
+                  {budget.il_total - budget.il_used} open
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-[10px] text-text-muted italic mt-0.5">Yahoo stats syncing…</p>
           )}
         </div>
       </div>
@@ -578,8 +602,9 @@ function MatchupStrip({ matchup }: { matchup: MatchupResponse | null }) {
   const opponentName = matchup.opponent.team_name || 'Opponent'
   const total = won + lost + tied
 
-  // Estimate win probability from category wins (simple heuristic)
-  const winPct = total > 0 ? Math.round((won / total) * 100) : null
+  // Share of decided categories currently won (NOT a projected win probability).
+  // Labeled "cats led" so it's not confused with the simulate win-probability strip.
+  const catsLedPct = total > 0 ? Math.round((won / total) * 100) : null
 
   return (
     <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
@@ -599,14 +624,14 @@ function MatchupStrip({ matchup }: { matchup: MatchupResponse | null }) {
             <span className="text-[10px] text-text-muted">·</span>
             <span className="text-xs font-bold text-status-bubble">{tied}T</span>
           </div>
-          {winPct != null && (
+          {catsLedPct != null && (
             <span className={cn(
               'text-[10px] font-semibold px-2 py-0.5 rounded border',
-              winPct >= 65 ? 'text-status-safe border-status-safe/30 bg-status-safe/10' :
-              winPct <= 35 ? 'text-status-lost border-status-lost/30 bg-status-lost/10' :
+              catsLedPct >= 65 ? 'text-status-safe border-status-safe/30 bg-status-safe/10' :
+              catsLedPct <= 35 ? 'text-status-lost border-status-lost/30 bg-status-lost/10' :
               'text-status-bubble border-status-bubble/30 bg-status-bubble/10',
-            )}>
-              {winPct}% win prob
+            )} title="Share of categories you're currently leading — not a projected win probability">
+              {catsLedPct}% cats led
             </span>
           )}
         </div>
@@ -660,6 +685,104 @@ function MatchupStrip({ matchup }: { matchup: MatchupResponse | null }) {
 // Optimize Panel
 // ───────────────────────────────────────────────────────────────────────────
 
+/** Transparent score breakdown for a single assignment.
+ *
+ * Two render paths:
+ *  - Blended (optimize.blended_score flag ON, score_breakdown present): shows the
+ *    talent / form / matchup Z-components.
+ *  - Legacy (flag OFF, score_breakdown absent): shows what the 14-day-only score
+ *    actually IS and where it came from, so the number is never opaque regardless
+ *    of flag state.
+ *
+ * In both cases the user can expand a row to see WHY a player ranks where they do. */
+function ScoreBreakdownRow({ assignment }: { assignment: PlayerSlotAssignment }) {
+  const [open, setOpen] = useState(false)
+  const sb = assignment.score_breakdown
+
+  const zColor = (z: number | null): string => {
+    if (z === null) return 'text-text-muted'
+    if (z > 0.5) return 'text-emerald-400'
+    if (z < -0.5) return 'text-rose-400'
+    return 'text-text-secondary'
+  }
+  const zLabel = (z: number | null, source?: string): string => {
+    if (z === null) return '—'
+    const label = source ? TALENT_SOURCE_LABELS[source] ?? source : ''
+    return `${z >= 0 ? '+' : ''}${z.toFixed(2)}${label ? ` (${label})` : ''}`
+  }
+
+  // --- Legacy path: no blended breakdown, explain the 14-day score's provenance ---
+  if (!sb) {
+    // reasoning looks like "Score 87.3 (player_scores)..." — extract the source tag
+    const srcMatch = assignment.reasoning.match(/\(([a-z_]+)\)/i)
+    const rawSource = srcMatch ? srcMatch[1] : ''
+    const sourceLabel = SCORE_SOURCE_LABELS[rawSource] ?? (rawSource || 'Unknown source')
+    return (
+      <div className="w-full">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center gap-1 text-[10px] text-text-muted hover:text-text-secondary transition-colors"
+        >
+          <ChevronRight className={cn('h-3 w-3 transition-transform', open && 'rotate-90')} />
+          <span>score breakdown</span>
+        </button>
+        {open && (
+          <div className="mt-1 text-[10px] bg-bg-surface rounded px-2 py-1.5 border border-border-subtle space-y-0.5">
+            <p className="text-text-muted">
+              Score: <span className="text-text-primary font-semibold">{assignment.lineup_score.toFixed(1)}</span>
+            </p>
+            <p className="text-text-muted">
+              Source: <span className="text-text-secondary">{sourceLabel}</span>
+            </p>
+            <p className="text-text-muted italic leading-snug">
+              This is a 14-day rolling Z-score percentile, relative to your roster.
+              It weights recent form only — no season track record or matchup context.
+            </p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // --- Blended path: three-component breakdown ---
+  return (
+    <div className="w-full">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[10px] text-text-muted hover:text-text-secondary transition-colors"
+      >
+        <ChevronRight className={cn('h-3 w-3 transition-transform', open && 'rotate-90')} />
+        <span>score breakdown</span>
+        {assignment.low_confidence && (
+          <span className="text-amber-400/80 font-semibold">· low confidence</span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-1 grid grid-cols-3 gap-1 text-[10px] bg-bg-surface rounded px-2 py-1.5 border border-border-subtle">
+          <div>
+            <p className="text-text-muted">Talent</p>
+            <p className={cn('font-semibold', zColor(sb.talent_z))}>
+              {zLabel(sb.talent_z, sb.talent_source === 'none' ? undefined : sb.talent_source)}
+            </p>
+          </div>
+          <div>
+            <p className="text-text-muted">Form (14d{sb.confidence < 0.4 ? ', thin' : ''})</p>
+            <p className={cn('font-semibold', zColor(sb.form_z_shrunk ?? sb.form_z))}>
+              {zLabel(sb.form_z_shrunk ?? sb.form_z)}
+            </p>
+          </div>
+          <div>
+            <p className="text-text-muted">Matchup</p>
+            <p className={cn('font-semibold', zColor(sb.matchup_z))}>
+              {zLabel(sb.matchup_z)}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function OptimizePanel({
   data,
   onApplyMove,
@@ -699,16 +822,17 @@ function OptimizePanel({
 
       <div className="grid sm:grid-cols-2 gap-2">
         {[...data.starters, ...data.bench].map((assignment) => (
-          <div key={assignment.player_key} className="flex items-center gap-3 bg-bg-elevated rounded px-3 py-2">
-            <SlotPill slot={assignment.assigned_slot} />
-            <div className="flex-1 min-w-0">
+          <div key={assignment.player_key} className="flex items-start gap-3 bg-bg-elevated rounded px-3 py-2">
+            <div className="pt-0.5"><SlotPill slot={assignment.assigned_slot} /></div>
+            <div className="flex-1 min-w-0 space-y-0.5">
               <p className="text-xs font-semibold text-text-primary truncate">{assignment.player_name}</p>
               <p className="text-[10px] text-text-muted truncate">{assignment.reasoning}</p>
+              <ScoreBreakdownRow assignment={assignment} />
             </div>
             <button
               onClick={() => onApplyMove(assignment.player_key, assignment.assigned_slot)}
               disabled={isApplying || isApplyingAll}
-              className="text-[10px] text-accent-gold hover:text-amber-300 font-semibold whitespace-nowrap disabled:opacity-50"
+              className="text-[10px] text-accent-gold hover:text-amber-300 font-semibold whitespace-nowrap disabled:opacity-50 self-center"
             >
               Apply
             </button>
@@ -862,9 +986,20 @@ function PlayerCard({
             className="bg-bg-elevated text-xs text-text-primary border border-border-default rounded px-2 py-1.5 focus:outline-none focus:border-accent-gold min-w-[90px]"
           >
             <option value="" className="bg-bg-elevated text-text-primary">Move to…</option>
-            {moveOptions.map((pos) => (
-              <option key={pos} value={pos} className="bg-bg-elevated text-text-primary">{pos}</option>
-            ))}
+            {moveOptions.map((pos) => {
+              const isILSlot = pos === 'IL' || pos === 'IL60'
+              const isDisabled = isILSlot && !isILEligible(player)
+              return (
+                <option
+                  key={pos}
+                  value={pos}
+                  disabled={isDisabled}
+                  className="bg-bg-elevated text-text-primary"
+                >
+                  {pos}{isDisabled ? ' (injured only)' : ''}
+                </option>
+              )
+            })}
           </select>
           <button
             type="button"
@@ -1151,6 +1286,14 @@ export default function RosterPage() {
   }
 
   if (roster.isError) {
+    // Surface a user-safe message. The backend sanitizes Yahoo error details
+    // (no league/team IDs leak), but be defensive: if the message still looks
+    // like raw vendor JSON, fall back to a generic notice.
+    const rawMsg = roster.error instanceof Error ? roster.error.message : ''
+    const looksLikeVendorJson = /[{"<]/.test(rawMsg) || /469\.l\.|league\//i.test(rawMsg)
+    const safeMsg = rawMsg && !looksLikeVendorJson
+      ? rawMsg
+      : 'Yahoo could not be reached. Your roster is still active on Yahoo.com — this is a connection issue, not a roster change.'
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="bg-bg-surface border border-border-subtle rounded-lg p-6 max-w-md w-full">
@@ -1158,9 +1301,7 @@ export default function RosterPage() {
             <AlertCircle className="h-5 w-5" />
             <span className="text-sm font-semibold">Failed to load roster</span>
           </div>
-          <p className="text-text-secondary text-sm">
-            {roster.error instanceof Error ? roster.error.message : 'Unknown error'}
-          </p>
+          <p className="text-text-secondary text-sm">{safeMsg}</p>
           <button onClick={() => roster.refetch()} className="mt-4 text-xs text-accent-gold hover:text-amber-300 font-semibold">
             Retry
           </button>
@@ -1192,11 +1333,14 @@ export default function RosterPage() {
   const activePlayers = filteredSorted.filter((p) => p.status === 'playing' || p.status === 'probable')
   const otherPlayers = filteredSorted.filter((p) => p.status !== 'IL' && p.status !== 'playing' && p.status !== 'probable')
 
-  // Human-readable team label
-  const teamLabel = (() => {
-    const match = data.team_key.match(/\.t\.(\d+)$/)
-    return match ? `Team ${match[1]}` : data.team_key
-  })()
+  // Human-readable team label. Prefer the roster endpoint's resolved team_name
+  // (same Yahoo teams resource the War Room's matchup endpoint reads from), then
+  // fall back to the matchup data already fetched on this page, then finally to
+  // the team_key. Never synthesize "Team 7" from the team_key regex — UAT
+  // 2026-07-17 showed "Team 7" instead of the real "Lindor Truffles".
+  const teamLabel = data.team_name
+    || matchup.data?.my_team.team_name
+    || data.team_key
 
   return (
     <div className="space-y-6">

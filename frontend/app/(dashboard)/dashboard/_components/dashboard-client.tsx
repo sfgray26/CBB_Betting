@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useSuspenseQuery, useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query"
 import { endpoints } from "@/lib/api"
 import {
@@ -39,6 +39,23 @@ function formatRelativeTime(iso: string | null | undefined): string {
   if (minutes < 60) return `${minutes}m ago`
   if (hours < 24) return `${hours}h ago`
   return `${Math.floor(hours / 24)}d ago`
+}
+
+/**
+ * Returns true only after the component has mounted on the client.
+ *
+ * Used to gate render-time Date.now()/new Date() calls that cause React #419
+ * hydration mismatches (server renders at T1, client hydrates at T2 → the
+ * formatted string differs). Before mount we render a stable placeholder; after
+ * mount we render the live value. This guarantees the server HTML matches the
+ * client's first render.
+ */
+function useIsMounted(): boolean {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+  return mounted
 }
 
 function severityDotClass(severity: LineupGap["severity"]) {
@@ -144,6 +161,7 @@ function useDashboardData() {
 export function DashboardHeader() {
   const [staleDismissed, setStaleDismissed] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const isMounted = useIsMounted()
   const { data: response } = useDashboardData()
   const isFetchingDashboard = useIsFetching({ queryKey: ["dashboard"] }) > 0
   const queryClient = useQueryClient()
@@ -193,7 +211,8 @@ export function DashboardHeader() {
           <AlertCircle className="h-4 w-4 text-status-bubble flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <p className="text-sm text-status-bubble">
-              ⚠️ Data may be stale — last updated {formatRelativeTime(dashboard?.last_sync)}.
+              ⚠️ Data may be stale — last updated{" "}
+              {isMounted ? formatRelativeTime(dashboard?.last_sync) : "…"}.
               Starting lineups may have changed.
             </p>
           </div>
@@ -235,13 +254,16 @@ export function DashboardHeader() {
         </div>
         <p className="text-text-secondary text-sm">
           Last updated:{" "}
-          {new Date(timestamp ?? Date.now()).toLocaleString("en-US", {
-            timeZone: "America/New_York",
-            dateStyle: "short",
-            timeStyle: "short",
-          })}
-          {" ET"}
-          {!timestamp ? " (approx)" : ""}
+          {/* Hydration-safe: Date.now()/new Date() differ between server and
+              client renders (React #419). Render a stable placeholder until
+              mounted, then the live ET timestamp. */}
+          {isMounted
+            ? new Date(timestamp ?? Date.now()).toLocaleString("en-US", {
+                timeZone: "America/New_York",
+                dateStyle: "short",
+                timeStyle: "short",
+              }) + " ET" + (!timestamp ? " (approx)" : "")
+            : "—"}
         </p>
       </div>
     </>
@@ -280,6 +302,7 @@ export function LineupStatusBar() {
 export function LineupGapsWidget() {
   const { data: response } = useDashboardData()
   const gaps = response?.success ? response.data.lineup_gaps : []
+  const dataAvailable = response?.success ? response.roster_data_available !== false : false
 
   const regularGaps = gaps.filter((g) => g.severity !== "optimization")
   const optimizationGaps = gaps.filter((g) => g.severity === "optimization")
@@ -298,7 +321,9 @@ export function LineupGapsWidget() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {gaps.length === 0 ? (
+        {!dataAvailable ? (
+          <p className="text-status-bubble text-sm">Lineup data unavailable — Yahoo roster could not be loaded.</p>
+        ) : gaps.length === 0 ? (
           <p className="text-text-muted text-sm">No lineup gaps detected.</p>
         ) : (
           <div className="space-y-4">
@@ -388,6 +413,7 @@ export function LineupGapsWidget() {
 export function InjuryFlagsWidget() {
   const { data: response } = useDashboardData()
   const flags = response?.success ? response.data.injury_flags : []
+  const dataAvailable = response?.success ? response.roster_data_available !== false : false
 
   return (
     <Card className="bg-bg-surface border-border-subtle">
@@ -403,7 +429,9 @@ export function InjuryFlagsWidget() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {flags.length === 0 ? (
+        {!dataAvailable ? (
+          <p className="text-status-bubble text-sm">Injury data unavailable — Yahoo roster could not be loaded.</p>
+        ) : flags.length === 0 ? (
           <p className="text-text-muted text-sm">No active injury alerts.</p>
         ) : (
           <ul className="space-y-3">
@@ -623,6 +651,7 @@ export function StreaksWidget() {
   })
   const hot = response?.success ? response.hot_streaks : []
   const cold = response?.success ? response.cold_streaks : []
+  const dataAvailable = response?.success ? response.roster_data_available !== false : false
 
   return (
     <Card className="bg-bg-surface border-border-subtle">
@@ -633,7 +662,9 @@ export function StreaksWidget() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {hot.length === 0 && cold.length === 0 ? (
+        {!dataAvailable ? (
+          <p className="text-status-bubble text-sm">Trend data unavailable — Yahoo roster could not be loaded.</p>
+        ) : hot.length === 0 && cold.length === 0 ? (
           <p className="text-text-muted text-sm">No streak data available.</p>
         ) : (
           <>
@@ -736,7 +767,11 @@ export function ProbablePitchersWidget() {
               >
                 <p className="text-text-primary text-sm font-medium">{p.name}</p>
                 <p className="text-text-muted text-xs mt-0.5">
-                  {p.team} vs {p.opponent || "TBD"} · {p.game_date}
+                  {p.team} vs{' '}
+                  {p.opponent
+                    ? p.opponent
+                    : <span className="italic opacity-70">opponent TBD</span>}
+                  {' · '}{p.game_date}
                 </p>
                 <div className="flex items-center gap-2 mt-1">
                   <span
@@ -790,7 +825,11 @@ export function TwoStartPitchersWidget() {
             >
               <p className="text-text-primary text-sm font-medium">{p.name}</p>
               <p className="text-text-muted text-xs mt-0.5">
-                {p.team} vs {p.opponent || "TBD"} · {p.game_date}
+                {p.team} vs{' '}
+                {p.opponent
+                  ? p.opponent
+                  : <span className="italic opacity-70">opponent TBD</span>}
+                {' · '}{p.game_date}
               </p>
               <p className="text-text-secondary text-xs mt-1">{p.reason}</p>
             </div>

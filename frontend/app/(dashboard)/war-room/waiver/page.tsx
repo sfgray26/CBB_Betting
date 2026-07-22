@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import type { WaiverAvailablePlayer, WaiverResponse, WaiverRosterPlayer, WaiverRecommendation, DropPlayerOut, CategoryDelta } from '@/lib/types'
-import { evaluateCategoryOutcome, isLowerBetterCategory } from '@/lib/types'
+import { evaluateCategoryOutcome, isLowerBetterCategory, INJURY_STATUS_LABELS } from '@/lib/types'
 import {
   ListFilter, Loader2, AlertCircle, TrendingUp,
   AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
@@ -219,7 +219,7 @@ function PlayerRow({ player, rosterPlayer }: {
                   ? 'bg-status-bubble/10 text-status-bubble border-status-bubble/30'
                   : 'bg-status-lost/10 text-status-lost border-status-lost/30',
               )}>
-                {player.injury_status}
+                {INJURY_STATUS_LABELS[_inj] ?? player.injury_status}
               </span>
             )
           })()}

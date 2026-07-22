@@ -95,13 +95,15 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
         {/* IL Slots */}
         <StatRow
           label="IL Slots"
-          value={`${budget.il_used} / ${budget.il_total}`}
-          sub={
-            budget.il_used >= budget.il_total ? (
-              <span className="text-status-lost">Full</span>
-            ) : (
-              <span className="text-text-muted">{budget.il_total - budget.il_used} open</span>
-            )
+          value={(budget.il_data_available ?? false)
+            ? `${budget.il_used} / ${budget.il_total}`
+            : "—"
+          }
+          sub={(budget.il_data_available ?? false)
+            ? (budget.il_used >= budget.il_total
+              ? <span className="text-status-lost">Full</span>
+              : <span className="text-text-muted">{budget.il_total - budget.il_used} open</span>)
+            : <span className="text-text-muted">Yahoo stats syncing…</span>
           }
         />
 

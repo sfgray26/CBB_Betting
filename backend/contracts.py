@@ -501,6 +501,7 @@ class CategoryMathSummary(BaseModel):
 class CanonicalRosterResponse(BaseModel):
     """Full roster response with CanonicalPlayerRow format. Returned by GET /api/fantasy/roster."""
     team_key: str
+    team_name: Optional[str] = None
     players: List[CanonicalPlayerRow]
     count: int
     freshness: FreshnessMetadata
@@ -555,7 +556,7 @@ class BulkRosterMoveResponse(BaseModel):
 # MatchupPreview schemas — field names must match frontend MatchupPreviewResponse in types.ts
 class MatchupPreviewCategoryProjection(BaseModel):
     """Per-category projection row for the weekly preview table."""
-    category: str            # lowercase v2 code, e.g. "hr_b", "era"
+    category: str            # UPPERCASE v2 code, e.g. "HR_B", "ERA" (frontend filters on uppercase)
     win_prob: float          # probability my team wins this category (0–1)
     my_proj: Optional[float] = None   # projected stat value (None when simulation-only)
     opp_proj: Optional[float] = None  # opponent projected stat value
@@ -625,6 +626,28 @@ class DecisionAccuracyResponse(BaseModel):
 
 
 # P0-10: RosterOptimizeRequest + RosterOptimizeResponse
+
+class ScoreBreakdown(BaseModel):
+    """P28: Transparent breakdown of a player's blended lineup_score.
+
+    Exposes the three signals (talent / form / matchup) that combine into the
+    final score, so a user can see WHY a player ranks where they do rather than
+    trusting an opaque number. Populated only when the blended-score path is
+    active; absent (None) on the legacy 14-day-only path.
+    """
+    final_z: float
+    talent_z: Optional[float] = None
+    form_z: Optional[float] = None
+    form_z_shrunk: Optional[float] = None
+    matchup_z: Optional[float] = None
+    confidence: float = 0.0
+    talent_source: str = "none"
+    low_confidence: bool = False
+
+    class Config:
+        frozen = True
+
+
 class PlayerSlotAssignment(BaseModel):
     """Slot assignment for a single player."""
     player_key: str
@@ -632,6 +655,10 @@ class PlayerSlotAssignment(BaseModel):
     assigned_slot: str  # 'C','1B','2B','3B','SS','OF','Util','SP','RP','P','BN'
     lineup_score: float
     reasoning: str
+    # P28: optional blended-score transparency. Absent on the legacy path.
+    score_breakdown: Optional[ScoreBreakdown] = None
+    matchup_note: Optional[str] = None
+    low_confidence: bool = False
 
     class Config:
         frozen = True

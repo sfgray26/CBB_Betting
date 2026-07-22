@@ -312,7 +312,7 @@ export const endpoints = {
 
   /** Get hot/cold streaks */
   getDashboardStreaks: () =>
-    apiFetch<{ success: boolean; hot_streaks: StreakPlayer[]; cold_streaks: StreakPlayer[] }>(
+    apiFetch<{ success: boolean; roster_data_available?: boolean; hot_streaks: StreakPlayer[]; cold_streaks: StreakPlayer[] }>(
       '/api/dashboard/streaks'
     ),
 

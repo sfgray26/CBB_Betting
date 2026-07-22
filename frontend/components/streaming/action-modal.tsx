@@ -135,7 +135,7 @@ export function ActionModal({
                         </span>
                         {start.is_confirmed && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-status-safe/20 text-status-safe font-semibold">
-                            CONFIRMED
+                            Confirmed
                           </span>
                         )}
                       </div>

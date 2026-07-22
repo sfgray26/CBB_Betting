@@ -13,6 +13,8 @@ Algorithm outline
 4. Z = (val - mean) / std; negate Z for lower-is-better categories.
 5. Cap Z at +/-Z_CAP to dampen outlier distortion.
 6. composite_z = mean of all applicable non-None Z-scores for the player.
+   P28: rate categories below the sample floor are imputed 0.0 (neutral) so the
+   weighted-mean denominator stays stable for low-inning relievers.
 7. score_0_100 = percentile rank within the player's player_type cohort.
 8. confidence = min(1.0, games_in_window / window_days).
 
@@ -79,6 +81,7 @@ _COMPOSITE_EXCLUDED: frozenset = frozenset({"z_sb"})
 # Minimum number of players with a non-null value before computing Z for a category
 # Low threshold ensures early-season rankings exist; consumers use 'confidence' to filter.
 from backend.services.config_service import get_threshold as _get_threshold
+from backend.services.config_service import is_flag_enabled
 MIN_SAMPLE: int = _get_threshold("scoring.min_sample", default=3)
 
 # Cap Z-scores at this absolute value to reduce outlier distortion
@@ -278,6 +281,12 @@ class PlayerScoreResult:
     position_adjusted_score: float = 0.0  # score_0_100 * position_scarcity_multiplier
     position_scarcity_multiplier: float = 1.0  # multiplier based on primary_position
 
+    # P28: Rate categories imputed as neutral (0.0) because the player was below
+    # the sample floor (MIN_RATE_IP / MIN_RATE_AB) but the category was computed
+    # for the cohort. Tracked for explainability — these categories are honest
+    # "league-average, unconfirmed" placeholders, not measured values.
+    imputed_categories: list = field(default_factory=list)
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -449,6 +458,13 @@ def compute_league_zscores(
     if not rolling_rows:
         return []
 
+    # P28: Rate-floor imputation toggle. When a rate category (ERA/WHIP/K9/AVG/
+    # OBP/OPS) was scored for the cohort but the player was below the sample
+    # floor, impute a neutral 0.0 Z instead of dropping the category. Default
+    # ON (principled fix for the reliever denominator-shrink distortion). Flag
+    # lets us revert without redeploy if the change misbehaves.
+    _disable_rate_imputation = is_flag_enabled("scoring.disable_rate_imputation")
+
     # ------------------------------------------------------------------
     # Step 1: Compute league-level stats per category
     # ------------------------------------------------------------------
@@ -535,6 +551,23 @@ def compute_league_zscores(
         # Assign per-category Z-scores
         for z_key in applicable_keys:
             z_val = category_z_lookup[z_key].get(pid)  # None if not computed
+            if (
+                z_val is None
+                and z_key in _RATE_DENOMINATORS
+                and category_z_lookup[z_key]  # cohort computed it, player was floor-excluded
+            ):
+                # P28: This rate category was scored for the cohort but the player
+                # was excluded for being below the sample floor (MIN_RATE_IP /
+                # MIN_RATE_AB).  Impute a neutral 0.0 (league-average, unconfirmed)
+                # instead of dropping the category.  Dropping shrank the weighted-
+                # mean denominator and distorted composite_z for low-inning
+                # relievers — e.g. an elite RP whose ERA/WHIP were stripped scored
+                # below a mediocre SP who kept all categories (the "Latz bug").
+                # Imputing 0.0 keeps the denominator stable: "no evidence this
+                # player is above or below average in this rate" is honest.
+                if not _disable_rate_imputation:
+                    z_val = 0.0
+                    result.imputed_categories.append(z_key)
             setattr(result, z_key, z_val)
 
         # Step 3: composite_z = weighted sum of all applicable non-None Z-scores.

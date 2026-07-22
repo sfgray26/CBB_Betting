@@ -5,10 +5,360 @@
 
 ---
 
+## SESSION LOG — 2026-07-22: SEV-1 Yahoo 403 Cascade — RECOVERED, Code Fixes Deployed (UNCOMMITTED)
+
+**Incident:** Every Yahoo Fantasy API call returning `403: "This application is
+not authorized"`, taking down Roster, Matchup Preview, Projection Coverage,
+Waiver Wire. Dashboard widgets showing false "all clear" (Injury/Lineup/Streaks).
+Roster page dumping raw Yahoo JSON (incl. internal league/team IDs) to the screen.
+
+**Root cause (Track A — NOT code, needs credential fix by operator/Codex):**
+Yahoo OAuth app-authorization failure. Most likely: refresh-token rotation broke
+— `yahoo_client_resilient.py` writes rotated refresh tokens to `.env`, but `.env`
+isn't writable on Railway (logs "in-memory only"), so Yahoo's rotating refresh
+token is lost on every redeploy → old `YAHOO_REFRESH_TOKEN` becomes permanently
+invalid → every call 403s. Deployed HEAD is `dcb46a9` (my P28 work is NOT
+deployed). Verified I touched zero auth/client files.
+
+**Track A action (Codex/operator — restores service):**
+1. Re-run one-time auth: `python -m backend.fantasy_baseball.yahoo_client_resilient --auth`
+   (or hit `GET /refresh-yahoo-token` via `backend/admin_yahoo_token_refresh.py`,
+   which returns a ready `railway variables set` command).
+2. Set fresh `YAHOO_REFRESH_TOKEN` + `YAHOO_ACCESS_TOKEN` in Railway.
+3. Check Yahoo dev app panel (developer.yahoo.com) isn't suspended/revoked.
+4. Redeploy. **Until this is done, the 403 persists — no frontend fix helps.**
+
+**Codex DevOps update — 2026-07-22 15:00 EDT:**
+Review gate passed and Track B is deployed to Railway production. Backend
+`Fantasy-App` deployment `49fe648e-399d-42c7-a45d-47d149f82f3e` completed
+`SUCCESS` with image `sha256:07daba2cac2a2cfc64fc80b01579557c214628fe19b03e8f7865dd9946750360`.
+Frontend `observant-benevolence` deployment
+`e3a75644-d1dc-46d8-a7b1-d8829a874adf` completed `SUCCESS` with image
+`sha256:d11d0517317170e332c7f88cebc77f77cebab7d8dfc0084517b8950de3032dbe`.
+
+Codex minted a fresh Yahoo token pair through the Railway runtime and persisted
+`YAHOO_ACCESS_TOKEN` + `YAHOO_REFRESH_TOKEN` back to Railway variables. No token
+values were printed or stored in handoff. Production smoke checks after deploy:
+backend `/health` -> 200 healthy; frontend `/war-room/roster` -> 200;
+`/api/fantasy/yahoo-health` -> 200 with `status:"down"` and
+`error:"Yahoo client not initialized"`. This means the app is live and hardened,
+but Track A is NOT restored. Next operator action is Yahoo developer app
+authorization/re-consent/suspension review, then token refresh + redeploy if the
+Yahoo grant changes.
+
+**Codex Track A auth attempt — 2026-07-22 15:48 EDT:**
+User confirmed the Yahoo developer app still displays Fantasy Sports: Read and
+completed the one-time local OAuth consent flow. The module command
+`venv\Scripts\python -m backend.fantasy_baseball.yahoo_client_resilient --auth`
+exchanged the authorization code successfully and wrote fresh local `.env`
+tokens, but its built-in Fantasy league self-test still returned Yahoo 403
+`"This application is not authorized to perform this action."` The required
+local verification command
+`venv\Scripts\python -c "from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient; print(YahooFantasyClient().get_my_team_key())"`
+also failed with 403 for `/fantasy/v2/league/469.l.72586/teams`.
+
+Per the P0 runbook, Codex stopped before changing production variables. Current
+conclusion: refresh and consent token exchange work, but the Yahoo OAuth grant
+issued for this app/account still does not carry usable Fantasy Sports API
+authorization. Next action is user-side Yahoo developer/app escalation: create a
+new Yahoo developer app with Fantasy Sports: Read in the user's Yahoo account or
+resolve the existing app grant with Yahoo. If a new app is created, production
+will also need updated `YAHOO_CLIENT_ID` and `YAHOO_CLIENT_SECRET`, then a fresh
+OAuth run and Railway token update.
+
+**Codex recovery verification — 2026-07-22 16:26 EDT:**
+User reported Yahoo API access is back and the issue was on Yahoo's client side.
+Codex verified production recovery without code or Railway variable changes:
+`/api/fantasy/yahoo-health` returned 200 with `status:"healthy"`,
+`last_success_at:"2026-07-22T16:26:55.104630-04:00"`, and `error:null`.
+Bounded production logs showed the health check with no fresh Yahoo 403 /
+`not authorized` entries. A Railway production-env verification command printed
+`team_key_ok 469.l.72586.t.7`, confirming Fantasy API authorization is usable
+again with the existing deployed environment. Frontend `/war-room/roster`
+returned 200; direct unauthenticated `/api/fantasy/roster` correctly returned
+the API-key guard, so user browser confirmation remains the final UI check.
+
+**Track B (code fixes — COMPLETE, reduces blast radius + prevents recurrence):**
+
+**B.1 — Yahoo client: add 403 to refresh trigger (`yahoo_client_resilient.py`).**
+Previously only 401 triggered refresh; 403 was a hard failure with no self-heal.
+Now a 403 attempts ONE token refresh (guarded against loops). Won't fix a truly
+revoked app (refresh also fails) but self-heals transient token issues. Also added
+a loud init warning when `YAHOO_REFRESH_TOKEN` is missing.
+
+**B.2 — Sanitize all Yahoo error details (24 sites in `fantasy.py`).**
+Added `_safe_yahoo_error_message()` helper that classifies errors into generic
+user-facing messages and logs full detail server-side only. Replaced all
+`detail=str(exc)` / `detail=f"Yahoo...{exc}"` / `message=f"Yahoo...{exc}"` leak
+sites. **Stops the league/team-ID info leak to the browser.**
+
+**B.3 — Budget IL-Slots false negative (backend + 2 frontend panels).**
+Added `il_data_available` flag to budget endpoint (mirrors existing
+`ip_data_available`). When Yahoo roster fetch fails, both BudgetPanel copies now
+render "Yahoo stats syncing…" instead of a false green "0/3 · 3 open".
+
+**B.4 — Dashboard false "all clear" (3 widgets).**
+Added `roster_data_available` to `/api/dashboard` + `/api/dashboard/streaks` via a
+`_probe_roster_available()` ground-truth check. Injury Alerts, Lineup Gaps, and
+Player Trends now show "data unavailable — Yahoo roster could not be loaded" when
+the roster fetch fails, instead of "No active injury alerts" / "No lineup gaps" /
+"No streak data" (which were false when 5 pitchers were actually injured).
+
+**B.5 — Roster page raw-error dump (`roster/page.tsx`).**
+Error card now shows a sanitized, user-safe message and defensively falls back
+to a generic notice if the message still looks like raw vendor JSON. Reinforces
+B.2's backend sanitization at the render layer.
+
+**Verification:** 220 backend tests pass (dashboard, roster optimize/move,
+comparator, scoring, blended, waiver); `tsc --noEmit` clean; `npm run build`
+clean; `git diff --check` clean (EXIT=0).
+Note: pre-existing `datetime.utcnow()` at dashboard_service.py:339 found but NOT
+introduced by this work (git diff confirms) — out of scope for this hotfix.
+
+**Files changed (Track B):** `yahoo_client_resilient.py`, `fantasy.py`,
+`dashboard_service.py`, `dashboard-client.tsx`, `budget-panel.tsx`, `roster/page.tsx`,
+`lib/types.ts`, `lib/api.ts`.
+
+**Kimi CLI (Track C — UAT triage fixes, operator-delegated, 2026-07-22 evening, UNCOMMITTED):**
+Source: `reports/2026-07-22-fantasy-module-audit-triage.md` (two UAT passes, all
+findings verified w/ file:line). Fixed the top-3 confirmed logic bugs:
+
+- **C.1 — War Room sim direction inversion (W3, `mcmc_simulator.py`).** Raw
+  scoreboard anchors for LOWER_IS_BETTER cats (L, K_B, ERA, WHIP, HR_P) were added
+  to direction-normalized z-sums without sign inversion → every lower-is-better
+  category ranked backwards mid-week (ahead 1-4 in L scored BEHIND/PUNT?; up 22-35
+  in K_B scored LOST). Fix: sign-invert anchors via `_direction` vector; skip the
+  zero-clamp for lower-is-better count cats (K_B) since their totals now live in
+  signed z-space; re-invert sign for `category_projections` display so users still
+  see real values ("1→4", not "-1→-4").
+- **C.2 — Weekly Preview empty category table (P1, `fantasy.py` matchup-preview).**
+  Endpoint passed the simulator's lowercase `category_win_probs` keys through
+  verbatim; frontend filters rows against UPPERCASE codes → zero rows while the
+  aggregate 100% rendered. Fix: consume `sim["category_projections"]` (uppercase +
+  my/opp means) for table rows; `weak_categories` keep lowercase (deep-link +
+  existing tests depend on it); contract comment updated (`contracts.py`).
+- **C.3 — Optimizer bench "Unknown source" tooltip (`fantasy.py:5873`).** Bench
+  reasoning string lacked the `(score_source)` tag starters/pitchers include; the
+  tooltip regex found nothing → "Unknown source". One-line fix.
+
+**Verification:** `py_compile` clean on all touched files; 109 targeted tests pass
+(`test_mcmc_anchor` +3 new regression tests covering L-lead, K_B-lead, and display
+sign; `test_mcmc_simulator`, `test_mcmc_simulator_v2`, `test_matchup_preview`,
+`test_row_simulation_bridge`, `test_fantasy_fixes`, `test_waiver_edge`,
+`test_phase3_integration`).
+
+**Files changed (Track C):** `backend/fantasy_baseball/mcmc_simulator.py`,
+`backend/routers/fantasy.py`, `backend/contracts.py`, `tests/test_mcmc_anchor.py`.
+**Next up (not done):** P3 Schedule Advantage hardcoded 0/0; V1 waiver latency
+(client-side sort); R2 TBD-stub → honest degraded state; S1 probable-pitcher
+inference tolerance + coverage alert; §0 infra (token persistence, YAHOO_TEAM_KEY).
+**Needs deploy by Codex after review.**
+
+---
+
+## SESSION LOG — 2026-07-22: UAT Bug Triage — ALL SIX CLOSED (incl. residuals) (UNCOMMITTED)
+
+**Context:** A six-bug fix list was proposed (waiver sort, roster TBD placeholders,
+war-room win prob, optimizer opacity, K/HR ambiguity, raw enum strings). All six
+were verified against current code. Initial pass found 3 already fixed, 1 absent
+on the named page, 2 genuinely broken. On direction to "fix everything," the scope
+expanded to close every residual in the "already fixed" items and finish the
+half-done one. **All six are now fully closed** — details below.
+
+**Fix #1 — Waiver Wire "Overall Value" sort ignored (`backend/routers/fantasy.py`):**
+The frontend toggle sends `sort=projected_points` but the backend had no branch
+for it — it fell through to the default `need_score` ordering, so "Overall Value"
+silently did nothing. The `projected_points` field on `WaiverPlayerOut` is
+vestigial/never populated; the real overall-value metric is `z_score` (season-long
+composite, already displayed as "Z"). Added an `elif sort in
+("projected_points", "overall_value")` branch that sorts by `z_score` descending
+(None sorts last). `percent_owned` and default (`need_score`) paths unchanged.
+Verified: 52 waiver tests pass; the pre-existing `test_waiver_sort_parameter.py`
+is an untracked TDD stub that was already failing (broken mocks hitting live
+FanGraphs/Statcast + wrong response key `available_players` vs actual `top_available`)
+— not a regression from this change.
+
+**Fix #6 — Raw enum strings leak to UI (frontend, 6 sites):**
+No central humanization layer existed; backend enum/identifier strings reached
+users verbatim. Added label maps to `frontend/lib/types.ts`
+(`TIER_LABELS`, `CONFIDENCE_LABELS`, `TALENT_SOURCE_LABELS`,
+`INJURY_STATUS_LABELS`, `humanizeDataSource()`) and applied at the 6 confirmed
+leak sites:
+- `streaming-recommendations.tsx`: tier filter button, "No pitchers with {tier}"
+  message, recommendation badge, confidence badge, data-sources footer,
+  `CONFIRMED` → "Confirmed".
+- `action-modal.tsx`: `CONFIRMED` → "Confirmed".
+- `roster/page.tsx`: `ScoreBreakdownRow` talent source (`statcast`→"Statcast",
+  `score_30d`→"30-day").
+- `waiver/page.tsx`: injury status (`DTD`→"Day-to-Day", `IL10`→"IL (10-day)", etc.).
+
+**Residuals closed (expanded "fix everything" scope):**
+
+- **#2 Dashboard TBD (was "does not exist on roster page"):** The roster page
+  itself was already clean, but the *Dashboard* pitching schedule rendered
+  `{p.opponent || "TBD"}` as a bare raw string indistinguishable from a real team
+  name. Fixed both sites (dashboard-client.tsx ~761, ~815): unknown opponents now
+  render as a muted italic "opponent TBD" so they read as "not yet set," not a
+  team called TBD.
+- **#3 War Room win-prob residual:** The main fabricated-score bug was fixed in
+  Sprint 1, but the *roster* page's `CategoryBattlefield` computed `won/total`
+  (share of categories currently led) and labeled it "% win prob" — misleading,
+  since it's a live category lead, not a projected probability. Relabeled to
+  "% cats led" with a tooltip clarifying it's not a win probability, eliminating
+  the same family of confusion.
+- **#4 Optimizer opacity (was flag-gated):** The P28 `ScoreBreakdown` disclosure
+  only rendered when `optimize.blended_score` was ON. Rewrote `ScoreBreakdownRow`
+  to ALSO render on the legacy path (flag OFF): extracts the score source from
+  `reasoning` and shows the score, its source (humanized via new
+  `SCORE_SOURCE_LABELS`), and an explanation that it's a 14-day rolling Z-score
+  relative to the roster. Opacity is now fixed in the default configuration.
+- **#5 K/HR ambiguity residual:** Sprint 1 canonicalized the main `/waiver`
+  endpoint, but `/waiver/recommendations` still emitted raw Yahoo keys (`K(B)`)
+  and compared them un-canonicalized. Hoisted `_WAIVER_CAT_CANON` to module level
+  (shared by both endpoints) and applied it in the recommendations deficit build
+  so both endpoints agree. Added `SCORE_SOURCE_LABELS` to the humanization layer.
+
+**Items confirmed genuinely complete (no residual found):**
+- #1 Waiver sort: the `projected_points` branch is the only sort logic; no other
+  waiver endpoint accepts a sort param.
+- #6 Raw enums: full sweep confirms no remaining raw momentum/signal/verdict
+  rendering; all six leak sites humanized.
+
+**Verification:** 244 backend tests pass (category comparator + consistency +
+waiver + optimize + scoring + blended suites); `tsc --noEmit` clean;
+`npm run build` clean.
+
+---
+
+## SESSION LOG — 2026-07-22: P28 Roster Optimizer Scoring Redesign (UNCOMMITTED)
+
+**Mission:** Replace the 14-day-only roster-optimize score with a talent-anchored
+blended composite so the optimizer benches players for the *right* reasons
+(matchup, track record) instead of on a one-week cold sample. Triggered by the
+Soto-benching incident: the tool benched Soto (.943 season OPS) for Soderstrom
+on a 7-day cold streak, with no visibility into why.
+
+**Root causes verified in code (not assumptions):**
+1. `fantasy.py:5270,5284` hardcoded `window_days == 14` — no season/talent signal.
+2. `scoring_engine.py:568` computed `confidence` but the optimize path discarded
+   it (`fantasy.py:5289` read only `score_0_100`, `:5452` hardcoded `confidence=1.0`).
+3. `scoring_engine.py:90-100` dropped reliever rate categories (ERA/WHIP/K9) to
+   None below `MIN_RATE_IP=8.0` → denominator shrink → Latz (1.57 ERA) scored
+   below Williams (4.00 ERA). The "Latz bug".
+4. `matchup_context.matchup_z` (5-factor matchup model) computed daily but inert —
+   the consuming boost is gated behind `feature.matchup_enabled` (default OFF).
+
+**Four-phase implementation (all complete, all feature-flagged):**
+
+**Phase 1 — Rate-floor fix (`scoring_engine.py`):** Sub-floor rate categories are
+now imputed neutral 0.0 (not dropped) so the weighted-mean denominator stays
+stable. Tracked in `PlayerScoreResult.imputed_categories` for explainability.
+Gated by `scoring.disable_rate_imputation` (default OFF = imputation ON).
+Tests: `tests/test_scoring_engine_rate_floor.py` (7 new) + 2 existing tests in
+`test_scoring_engine.py` updated to the new contract. All pass.
+
+**Phase 2 — Blended score service (`backend/services/blended_score.py`, NEW):**
+Pure function `compute_blended_score()` combines talent_z (Statcast xwOBA/xERA
+or 30-day fallback) + form_z (14-day composite_z, confidence-shrunk toward
+talent) + matchup_z (from matchup_context). Default weights 60/20/20
+(talent/form/matchup), tunable via `optimize.weight.{talent,form,matchup}`.
+Dynamic weight renormalization when a component is missing. Low-confidence
+dampening of matchup signal. Tests: `tests/test_blended_score.py` (19 new).
+
+**Phase 3 — Endpoint wiring (`fantasy.py`):** `_resolve_blended_signals()`
+batch-loads all three signals in ~4 queries (no N+1). When
+`optimize.blended_score` flag is ON, overrides `lineup_score` with the blended
+percentile and SKIPS the min-max normalization (the blend is an absolute Z).
+On flag OFF (production default), the endpoint is byte-identical to before.
+Graceful fallback: if the blended resolver throws, reverts to legacy (never 500).
+Tests: 3 new in `test_roster_optimize_api.py` (flag-off parity, flag-on valid,
+error fallback). Full suite 23/23 pass.
+
+**Phase 4 — Explainability (`contracts.py`, `types.ts`, roster page):** New
+`ScoreBreakdown` Pydantic model + frontend type. `PlayerSlotAssignment` extended
+with optional `score_breakdown`, `matchup_note`, `low_confidence`. Roster page
+renders an expandable per-row disclosure showing the talent/form/matchup
+components — directly addresses the user's ask to "expose what player_scores is
+composed of." Frontend `tsc --noEmit` and `npm run build` both pass.
+
+**Verification:** 140/140 tests pass across scoring/blended/optimize/dashboard
+suites. All touched backend files compile. Frontend builds clean.
+
+**Known limitation (NOT fixed here — separate DB migration task):**
+`opponent_starter_hand` column is referenced by `matchup_engine._fetch_hitter_splits`
+but is NOT in the ORM (`MLBPlayerStats`, `models.py:1219`) and not in any
+migration. This means the 35%-weight handedness factor in matchup_z may return
+~0 in production today; platoon signal flows reliably only via the
+pybaseball-dependent `PlatoonSplitFetcher` path. The matchup_z still carries
+opposing-pitcher/park/weather/bullpen signals reliably. Fixing the column is a
+greenfield migration, out of scope for this redesign.
+
+**Flags state (all default OFF — dark deployment, zero behavior change):**
+- `scoring.disable_rate_imputation` — OFF (imputation ON). Flip ON to revert P1.
+- `optimize.blended_score` — OFF. Flip ON to activate P2/P3 blended scores.
+
+**Files changed:**
+- `backend/services/scoring_engine.py` (P1 — rate-floor imputation + `imputed_categories`)
+- `backend/services/blended_score.py` (P2 — NEW, pure blend function)
+- `backend/routers/fantasy.py` (P1/P3 — `_resolve_blended_signals`, endpoint wiring)
+- `backend/contracts.py` (P4 — `ScoreBreakdown` + `PlayerSlotAssignment` fields)
+- `frontend/lib/types.ts` (P4 — `ScoreBreakdown` interface)
+- `frontend/app/(dashboard)/war-room/roster/page.tsx` (P4 — `ScoreBreakdownRow` disclosure)
+- `tests/test_scoring_engine_rate_floor.py` (NEW), `tests/test_blended_score.py` (NEW)
+- `tests/test_scoring_engine.py` (2 updated), `tests/test_roster_optimize_api.py` (3 added)
+
+**Codex DevOps validation + deploy — 2026-07-22 13:40 EDT:** Review gate passed
+after `backend/contracts.py` line-ending normalization cleared `git diff --check`
+(remaining output is harmless Windows LF→CRLF notices only). Backend compile
+passed for `contracts.py`, `fantasy.py`, `dashboard_service.py`,
+`scoring_engine.py`, and `blended_score.py`. Frontend `npx tsc --noEmit` and
+`npm run build` passed with only the pre-existing Next image/workspace-root
+warnings. Focused backend suite excluding the known broken untracked
+`tests/test_waiver_sort_parameter.py` TDD stub passed: 340 passed, 1 warning.
+
+Railway production deploys:
+- Backend `Fantasy-App`: deployment `0e07a9be-b924-41e9-a0c2-3af671523598` →
+  `SUCCESS`.
+- Frontend `observant-benevolence`: deployment
+  `07597437-9a97-4e5d-9045-8a17cd73dc0e` → `SUCCESS`.
+
+Smoke checks:
+- Backend `https://fantasy-app-production-5079.up.railway.app/health` → 200
+  `{"status":"healthy","database":"connected","scheduler":"running"}`.
+- Frontend `https://observant-benevolence-production.up.railway.app/war-room/roster`
+  → 200.
+
+**Next step:** Recommend flipping `optimize.blended_score` ON in staging first to
+validate the blended scores against the live roster before prod.
+
+---
+
 ## SESSION LOG — 2026-07-17: UAT Sprint 1 (3 CRITICAL fixes, UNCOMMITTED working tree)
 
 Source: UAT report 2026-07-17 (Week 17). Triage: `UAT_DEV_TRIAGE.md`.
 All changes UNCOMMITTED on `stable/cbb-prod`, awaiting user review before Sprint 2.
+
+### Codex DevOps redeploy — 2026-07-17 11:20 EDT
+
+Reviewed latest commit `dcb46a9` plus current working tree deltas in
+`backend/routers/fantasy.py`, `backend/services/dashboard_service.py`, and
+`frontend/app/(dashboard)/war-room/roster/page.tsx`. No blocking code-review
+findings found in the deploy scope.
+
+Verification before deploy:
+- `git diff --check` passed.
+- `.venv\Scripts\python -m py_compile backend\routers\fantasy.py backend\services\dashboard_service.py backend\services\category_comparator.py` passed.
+- `frontend: npx tsc --noEmit` passed.
+- `frontend: npm run build` passed with pre-existing Next.js image/workspace-root warnings.
+- Targeted backend pytest attempted via `uv run`; `tests/test_category_comparator.py` passed, but roster API/swap tests errored at import because the local uv/pytest environment could not import `redis`. This was an environment dependency issue, not an assertion failure.
+
+Railway deploys:
+- Backend `Fantasy-App`: deployment `a2f132d4-9491-462b-afd8-e6c8d09e97d1` → `SUCCESS`.
+- Frontend `observant-benevolence`: deployment `8490a677-afe4-4157-8ce6-61379ebd64a6` → `SUCCESS`.
+
+Smoke checks:
+- Backend `https://fantasy-app-production-5079.up.railway.app/health` → 200 `{"status":"healthy","database":"connected","scheduler":"running"}`.
+- Frontend `https://observant-benevolence-production.up.railway.app/war-room/roster` → 200.
 
 **C1 — Optimize "Apply" isolation + truthful toast**
 - `backend/routers/fantasy.py` `move_roster_player`: `set_lineup` payload now

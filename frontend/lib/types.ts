@@ -318,6 +318,7 @@ export interface DashboardResponse {
   success: boolean
   timestamp: string
   data: DashboardData
+  roster_data_available?: boolean
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -432,6 +433,70 @@ export const CATEGORY_COLOR: Record<RotoCategory, string> = {
 
 // Categories where lower value wins the week
 export const LOWER_IS_BETTER: RotoCategory[] = ['K_B', 'L', 'HR_P', 'ERA', 'WHIP']
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Enum humanization labels
+// Backend emits raw enum/identifier strings; these maps convert them to
+// user-facing labels so internal codes never reach the UI verbatim.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Streaming recommendation tiers (EXCELLENT/GOOD/AVERAGE/AVOID) → labels. */
+export const TIER_LABELS: Record<string, string> = {
+  EXCELLENT: 'Excellent',
+  GOOD: 'Good',
+  AVERAGE: 'Average',
+  AVOID: 'Avoid',
+}
+
+/** Streaming data-confidence levels (HIGH/MEDIUM/LOW) → labels. */
+export const CONFIDENCE_LABELS: Record<string, string> = {
+  HIGH: 'High',
+  MEDIUM: 'Medium',
+  LOW: 'Low',
+}
+
+/** Blended-score talent provenance → labels (ScoreBreakdown.talent_source). */
+export const TALENT_SOURCE_LABELS: Record<string, string> = {
+  statcast: 'Statcast',
+  score_30d: '30-day',
+  none: '—',
+}
+
+/** Yahoo injury-status codes → human-readable labels. */
+export const INJURY_STATUS_LABELS: Record<string, string> = {
+  DTD: 'Day-to-Day',
+  D2D: 'Day-to-Day',
+  INJ: 'Injured',
+  IL: 'IL',
+  IL10: 'IL (10-day)',
+  IL15: 'IL (15-day)',
+  IL60: 'IL (60-day)',
+  OUT: 'Out',
+  NA: 'Not Active',
+  OFS: 'Off Roster',
+}
+
+/** Optimizer score provenance (score_source) → human-readable labels. */
+export const SCORE_SOURCE_LABELS: Record<string, string> = {
+  player_scores: '14-day rolling Z-score',
+  projection_fallback: 'Board projection fallback',
+  default: 'No data — default score',
+  blended: 'Blended talent + form + matchup',
+}
+
+/**
+ * Humanize a backend data-source identifier for display.
+ * Strips noisy internal suffixes and title-cases the rest.
+ * e.g. "StatcastPerformances (quality_score)" → "Statcast Performances"
+ */
+export function humanizeDataSource(raw: string): string {
+  return raw
+    .replace(/\s*\([^)]*\)\s*$/, '')      // drop " (...)" qualifiers
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // camelCase → spaces
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim()
+}
 
 // Ratio/rate stats: display value + color only, no split bar
 export const RATIO_CATEGORIES: RotoCategory[] = ['AVG', 'OPS', 'ERA', 'WHIP', 'K_9']
@@ -716,6 +781,7 @@ export interface BudgetData {
   acquisition_warning: boolean
   il_used: number
   il_total: number
+  il_data_available?: boolean
   ip_accumulated: number
   ip_minimum: number
   ip_pace: "BEHIND" | "ON_TRACK" | "AHEAD"
@@ -843,6 +909,7 @@ export interface RosterPlayer {
 
 export interface RosterResponse {
   team_key: string
+  team_name?: string | null
   players: RosterPlayer[]
   count: number
   freshness?: {
@@ -881,12 +948,27 @@ export interface RosterMoveResponse {
   }
 }
 
+export interface ScoreBreakdown {
+  final_z: number
+  talent_z: number | null
+  form_z: number | null
+  form_z_shrunk: number | null
+  matchup_z: number | null
+  confidence: number
+  talent_source: 'statcast' | 'score_30d' | 'none'
+  low_confidence: boolean
+}
+
 export interface PlayerSlotAssignment {
   player_key: string
   player_name: string
   assigned_slot: string
   lineup_score: number
   reasoning: string
+  /** P28: transparent score breakdown. Present only on the blended-score path. */
+  score_breakdown?: ScoreBreakdown | null
+  matchup_note?: string | null
+  low_confidence?: boolean
 }
 
 export interface RosterOptimizeResponse {

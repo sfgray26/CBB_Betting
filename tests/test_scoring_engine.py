@@ -243,8 +243,12 @@ def test_whip_inverted_low_whip_is_positive_z():
     assert r.z_whip > 0.0, f"Low WHIP should give positive z_whip, got {r.z_whip}"
 
 
-def test_small_sample_hitter_rate_stats_are_suppressed():
-    """Tiny AB samples should not turn unsustainable AVG/OBP/OPS into rate z-scores."""
+def test_small_sample_hitter_rate_stats_are_neutral_imputed():
+    """Tiny AB samples should not turn unsustainable AVG/OBP/OPS into misleading
+    extreme rate z-scores. P28: instead of dropping the category to None (which
+    shrank the composite denominator), impute a neutral 0.0 and track it in
+    imputed_categories. The protective intent is preserved — no extreme z-score
+    from a tiny hot/cold sample — without the denominator-distortion side effect."""
     rows = [
         _hitter(pid=1, hr=1.0, rbi=4.0, avg=0.650, obp=0.700, games=2),
         _hitter(pid=2, hr=1.0, rbi=4.0, avg=0.280, obp=0.340),
@@ -260,13 +264,18 @@ def test_small_sample_hitter_rate_stats_are_suppressed():
     results = compute_league_zscores(rows, AS_OF, WINDOW)
     r = _result_for(results, pid=1)
 
-    assert r.z_avg is None
-    assert r.z_obp is None
-    assert r.z_ops is None
+    # P28: rate categories imputed neutral (0.0), NOT None and NOT an extreme value
+    assert r.z_avg == 0.0, f"Sub-floor AVG should be imputed 0.0, got {r.z_avg}"
+    assert r.z_obp == 0.0
+    assert r.z_ops == 0.0
+    assert set(r.imputed_categories) == {"z_avg", "z_obp", "z_ops"}
 
 
-def test_small_sample_pitcher_rate_stats_are_suppressed():
-    """Tiny IP samples should not turn blowup ERA/WHIP/K9 rows into rate z-scores."""
+def test_small_sample_pitcher_rate_stats_are_neutral_imputed():
+    """Tiny IP samples should not turn blowup ERA/WHIP/K9 rows into misleading
+    extreme rate z-scores. P28: impute neutral 0.0 + track in imputed_categories
+    rather than dropping to None (which distorted the composite denominator for
+    low-inning relievers)."""
     rows = [
         _pitcher(pid=1, era=21.0, whip=4.5, k9=18.0, games=1),
         _pitcher(pid=2, era=3.20, whip=1.10, k9=9.0),
@@ -280,9 +289,11 @@ def test_small_sample_pitcher_rate_stats_are_suppressed():
     results = compute_league_zscores(rows, AS_OF, WINDOW)
     r = _result_for(results, pid=1)
 
-    assert r.z_era is None
-    assert r.z_whip is None
-    assert r.z_k_per_9 is None
+    # P28: rate categories imputed neutral (0.0), NOT None and NOT an extreme value
+    assert r.z_era == 0.0, f"Sub-floor ERA should be imputed 0.0, got {r.z_era}"
+    assert r.z_whip == 0.0
+    assert r.z_k_per_9 == 0.0
+    assert set(r.imputed_categories) == {"z_era", "z_whip", "z_k_per_9"}
 
 
 # ===========================================================================

@@ -135,6 +135,32 @@ def get_auto_stream_service():
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+def _safe_yahoo_error_message(exc: Exception, *, context: str = "Yahoo request") -> str:
+    """Return a user-safe error message that does NOT leak internal details.
+
+    YahooAPIError embeds the raw response body (resp.text[:300]) which contains
+    internal league keys (e.g. 469.l.72586), team keys, and fantasy_content XML.
+    Surfacing that in HTTPException.detail sends internal IDs to the browser.
+
+    This helper classifies the exception into a generic, safe message and logs
+    the full detail server-side only. Call sites should use it for any detail /
+    message string returned to the client.
+    """
+    raw = str(exc)
+    # Log the full error server-side for debugging.
+    logger.warning("%s failed: %s", context, raw)
+    # Classify into a safe, generic message.
+    if "403" in raw or "not authorized" in raw.lower():
+        return "Yahoo authorization failed — the app may need re-authentication."
+    if "401" in raw or "token" in raw.lower() or "auth" in raw.lower():
+        return "Yahoo authentication expired — re-auth required."
+    if "429" in raw or "rate limit" in raw.lower():
+        return "Yahoo rate limit reached — please retry shortly."
+    if "timeout" in raw.lower() or "timed out" in raw.lower():
+        return "Yahoo request timed out — please retry."
+    return f"{context} failed — please retry.";
+
 # Module-level MLB probable-starts cache (shared state — same pattern as main.py)
 _STARTS_CACHE: dict = {}
 
@@ -160,6 +186,22 @@ _FANTASY_TOTAL_WEEKS = 25
 def _compute_mlb_current_week(today: date) -> int:
     days_elapsed = max(0, (today - _MLB_FIRST_MATCHUP_MONDAY).days)
     return max(1, min(_FANTASY_TOTAL_WEEKS, (days_elapsed // 7) + 1))
+
+
+# Canonical Yahoo display-variant category keys → stat_contract codes.
+# Module-level so BOTH the waiver-wire and recommendations endpoints canonicalize
+# identically before compare_category and in the emitted CategoryDeficitOut.category
+# (UAT 2026-07-17: raw "K(B)" fell through to higher-is-better and flipped batting
+# K to a Loss; the recommendations endpoint still emitted raw keys post-Sprint-1).
+_WAIVER_CAT_CANON: dict = {
+    "K(B)": "K_B",
+    "K(P)": "K_P",
+    "HRA": "HR_P",
+    "HR": "HR_B",
+    "K/9": "K_9",
+    "SB": "NSB",
+    "SV": "NSV",
+}
 
 
 def _fetch_probable_starts_map(start_date: str, end_date: str) -> dict:
@@ -981,12 +1023,12 @@ async def sync_draft_from_yahoo(
     try:
         client = get_yahoo_client()
     except YahooAuthError as exc:
-        raise HTTPException(status_code=401, detail=f"Yahoo auth not configured: {exc}")
+        raise HTTPException(status_code=401, detail=_safe_yahoo_error_message(exc, context="Yahoo auth"))
 
     try:
         yahoo_picks = client.get_draft_results()
     except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=f"Yahoo API error: {exc}")
+        raise HTTPException(status_code=502, detail=_safe_yahoo_error_message(exc))
 
     if not yahoo_picks:
         return {"picks_synced": 0, "total_yahoo_picks": 0, "message": "Draft not started or no picks yet"}
@@ -1092,14 +1134,14 @@ async def sync_keepers_pre_draft(
     try:
         client = get_yahoo_client()
     except YahooAuthError as exc:
-        raise HTTPException(status_code=401, detail=f"Yahoo auth not configured: {exc}")
+        raise HTTPException(status_code=401, detail=_safe_yahoo_error_message(exc, context="Yahoo auth"))
 
     try:
         my_team_key = client.get_my_team_key()
         all_teams = client.get_all_teams()
         all_rosters = client.get_all_rosters()
     except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=f"Yahoo API error: {exc}")
+        raise HTTPException(status_code=502, detail=_safe_yahoo_error_message(exc))
 
     board = get_board()
 
@@ -2046,16 +2088,8 @@ async def get_fantasy_waiver_recommendations(
                 # BEFORE comparison so the verdict uses the same direction table
                 # as the Roster/War Room pages (UAT 2026-07-17: "K(B)" fell
                 # through to higher-is-better and flipped batting K to a Loss).
-                _WAIVER_CAT_CANON = {
-                    "K(B)": "K_B",
-                    "K(P)": "K_P",
-                    "HRA": "HR_P",
-                    "HR": "HR_B",
-                    "K/9": "K_9",
-                    "SB": "NSB",
-                    "SV": "NSV",
-                }
-
+                # Map is module-level (_WAIVER_CAT_CANON), shared with the
+                # recommendations endpoint.
                 for cat, my_val in my_stats.items():
                     canon_cat = _WAIVER_CAT_CANON.get(cat, cat)
                     opp_val = opp_stats.get(cat, 0.0)
@@ -2588,6 +2622,14 @@ async def get_fantasy_waiver_recommendations(
         top_available = [p for p in top_available if p.percent_owned <= max_percent_owned]
         if sort == "percent_owned":
             top_available.sort(key=lambda x: x.percent_owned, reverse=True)
+        elif sort in ("projected_points", "overall_value"):
+            # "Overall Value" toggle (frontend labels projected_points as
+            # "Overall Value"). The projected_points field on WaiverPlayerOut is
+            # vestigial/never populated; the season-long composite z_score is the
+            # real overall-value metric (already displayed as "Z" in the UI and
+            # populated at line ~2356). Sort by that so the toggle actually works.
+            # None/missing z_score sorts last (treated as lowest).
+            top_available.sort(key=lambda x: (x.z_score if x.z_score is not None else -999.0), reverse=True)
         else:
             top_available.sort(key=lambda x: x.need_score, reverse=True)
 
@@ -2653,13 +2695,13 @@ async def get_fantasy_waiver_recommendations(
         logger.error("Waiver endpoint -- Yahoo auth error: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail=f"Yahoo auth failed - refresh token may be expired. ({exc})",
+            detail=_safe_yahoo_error_message(exc, context="Yahoo auth"),
         ) from exc
     except YahooAPIError as exc:
         logger.error("Waiver endpoint -- Yahoo API error: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail=f"Yahoo API error: {exc}",
+            detail=_safe_yahoo_error_message(exc),
         ) from exc
     except Exception as exc:
         logger.exception("Waiver endpoint failed unexpectedly: %s", exc)
@@ -2724,7 +2766,7 @@ async def add_fantasy_waiver_player(
             team_key=team_key,
         )
     except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=f"Yahoo add/drop failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=_safe_yahoo_error_message(exc, context="Yahoo add/drop")) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Waiver add failed: {exc}") from exc
 
@@ -2787,7 +2829,7 @@ async def execute_roster_action(
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Yahoo Actions Service unavailable: {str(exc)}"
+            detail=_safe_yahoo_error_message(exc, context="Yahoo Actions Service")
         ) from exc
 
     # Execute the action
@@ -2945,11 +2987,12 @@ async def get_waiver_recommendations(
                 _my_stats = _rec_stats_dict(_my_matchup_teams[0][2])
                 _opp_stats = _rec_stats_dict(_my_matchup_teams[1][2])
                 for _cat, _my_val in _my_stats.items():
+                    _canon_cat = _WAIVER_CAT_CANON.get(_cat, _cat)
                     _opp_val = _opp_stats.get(_cat, 0.0)
-                    _result = compare_category(_cat, _my_val, _opp_val)
+                    _result = compare_category(_canon_cat, _my_val, _opp_val)
                     category_deficits.append(
                         CategoryDeficitOut(
-                            category=_cat,
+                            category=_canon_cat,
                             my_total=_my_val,
                             opponent_total=_opp_val,
                             deficit=_result.gap,
@@ -3711,13 +3754,13 @@ async def get_waiver_recommendations(
         logger.error("Waiver recommendations endpoint -- Yahoo auth error: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail=f"Yahoo auth failed - refresh token may be expired. ({exc})",
+            detail=_safe_yahoo_error_message(exc, context="Yahoo auth"),
         ) from exc
     except YahooAPIError as exc:
         logger.error("Waiver recommendations endpoint -- Yahoo API error: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail=f"Yahoo API error: {exc}",
+            detail=_safe_yahoo_error_message(exc),
         ) from exc
     except Exception as exc:
         logger.exception("Waiver recommendations endpoint failed unexpectedly: %s", exc)
@@ -3920,11 +3963,11 @@ async def get_fantasy_roster(
             # Successfully fetched roster - exit retry loop
             break
         except YahooAuthError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail=_safe_yahoo_error_message(exc, context="Roster fetch")) from exc
         except YahooAPIError as exc:
             # On last attempt, raise the error
             if attempt == max_retries - 1:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
+                raise HTTPException(status_code=502, detail=_safe_yahoo_error_message(exc, context="Roster fetch")) from exc
             # Otherwise, log and retry
             logger.warning(
                 "Roster fetch attempt %d failed (retrying in %.1fs): %s",
@@ -4165,8 +4208,22 @@ async def get_fantasy_roster(
         is_stale=False,  # TODO: compute from fetched_at
     )
 
+    # Resolve the human-readable team name (e.g. "Lindor Truffles") so the
+    # roster page doesn't have to synthesize "Team 7" from the team_key regex.
+    # Best-effort: a failure here must NOT break the roster fetch — the frontend
+    # falls back to the matchup endpoint's my_team.team_name when this is null.
+    team_name: Optional[str] = None
+    try:
+        for t in client.get_all_teams():
+            if t.get("team_key") == team_key:
+                team_name = t.get("name") or None
+                break
+    except Exception as _name_err:
+        logger.debug("roster: team_name resolution failed (non-fatal): %s", _name_err)
+
     return CanonicalRosterResponse(
         team_key=team_key,
+        team_name=team_name,
         players=canonical_players,
         count=len(canonical_players),
         freshness=freshness,
@@ -4246,7 +4303,7 @@ async def move_roster_player(
             success=False,
             player_key=request.player_key,
             to_position=request.target_position,
-            message=f"Yahoo authentication error: {str(exc)}",
+            message=_safe_yahoo_error_message(exc, context="Yahoo auth"),
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
                 fetched_at=None,
@@ -4261,7 +4318,7 @@ async def move_roster_player(
             success=False,
             player_key=request.player_key,
             to_position=request.target_position,
-            message=f"Yahoo API error: {str(exc)}",
+            message=_safe_yahoo_error_message(exc),
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
                 fetched_at=None,
@@ -4468,7 +4525,7 @@ async def move_roster_player(
             player_key=request.player_key,
             from_position=from_position,
             to_position=target_position,
-            message=f"Yahoo authentication error: {str(exc)}",
+            message=_safe_yahoo_error_message(exc, context="Yahoo auth"),
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
                 fetched_at=None,
@@ -4500,7 +4557,7 @@ async def move_roster_player(
             player_key=request.player_key,
             from_position=from_position,
             to_position=target_position,
-            message=f"Yahoo API error: {str(exc)}",
+            message=_safe_yahoo_error_message(exc),
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
                 fetched_at=None,
@@ -4623,9 +4680,9 @@ async def bulk_apply_roster_moves(
     try:
         raw_players = client.get_roster(team_key=team_key)
     except YahooAuthError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=_safe_yahoo_error_message(exc)) from exc
     except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=_safe_yahoo_error_message(exc)) from exc
 
     # Index current roster
     roster_by_key = {p["player_key"]: p for p in raw_players if p.get("player_key")}
@@ -4898,7 +4955,7 @@ async def bulk_apply_roster_moves(
                 status_code=403,  # 403 Forbidden is more appropriate than 502 for lineup locks
                 detail={"errors": [_format_lineup_lock_message()]}
             ) from exc
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=_safe_yahoo_error_message(exc)) from exc
 
     applied = set(result.get("applied", []))
     move_keys = {m.player_key for m in request.moves}
@@ -5065,14 +5122,24 @@ async def get_matchup_preview(
     }
 
     cat_win_probs: dict[str, float] = sim.get("category_win_probs", {})
+    # The simulator's category_projections carry UPPERCASE codes + my/opp means.
+    # The frontend filters rows against uppercase BATTER/PITCHER_CATEGORIES, so
+    # passing the lowercase cat_win_probs keys through verbatim rendered zero
+    # table rows while the aggregate win% still displayed (UAT 2026-07-22).
+    _sim_projs = {
+        cp.get("category"): cp for cp in sim.get("category_projections", [])
+    }
     category_projections: list[MatchupPreviewCategoryProjection] = []
     weak_categories: list[WeakCategory] = []
 
     for cat, win_prob in sorted(cat_win_probs.items()):
+        _cp = _sim_projs.get(cat.upper(), {})
         category_projections.append(
             MatchupPreviewCategoryProjection(
-                category=cat,
+                category=cat.upper(),
                 win_prob=round(win_prob, 4),
+                my_proj=_cp.get("my_proj"),
+                opp_proj=_cp.get("opp_proj"),
             )
         )
         if win_prob < 0.4:
@@ -5125,11 +5192,187 @@ async def projection_coverage(db: Session = Depends(get_db)):
     try:
         raw_players = client.get_roster(team_key=team_key)
     except YahooAuthError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=_safe_yahoo_error_message(exc)) from exc
     except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=_safe_yahoo_error_message(exc)) from exc
 
     return compute_roster_projection_coverage(db, raw_players)
+
+
+# ---------------------------------------------------------------------------
+# P28 Blended-score signal resolver (talent-anchored composite)
+#
+# Batch-loads the three signals the blended score needs (talent / form /
+# matchup) in a small number of queries, then delegates the blend math to the
+# pure backend.services.blended_score module. Gated by the
+# "optimize.blended_score" feature flag — when off, optimize_roster uses the
+# legacy 14-day-only path unchanged.
+# ---------------------------------------------------------------------------
+
+def _resolve_blended_signals(
+    db: Session,
+    raw_players: list[dict],
+    player_key_to_ids: dict,
+    player_scores_map_14d: dict,
+    target_date: str,
+) -> dict:
+    """Batch-load talent / form / matchup signals and compute blended scores.
+
+    Returns {player_key -> BlendedScoreResult}. Players with no resolvable
+    signals are omitted; the caller falls back to the legacy score for them.
+    """
+    from backend.services.blended_score import (
+        compute_blended_score,
+        percentile_to_z,
+        z_to_percentile,
+    )
+
+    blended: dict = {}
+
+    # ---- Form + confidence (14d) and talent fallback (30d) from PlayerScore ----
+    # 14d composite_z + confidence (currently unread by the legacy path).
+    bdl_ids = [
+        player_key_to_ids[pk].get("bdl_id")
+        for pk in [p.get("player_key") for p in raw_players]
+        if pk and pk in player_key_to_ids and player_key_to_ids[pk].get("bdl_id")
+    ]
+    bdl_ids = list({bid for bid in bdl_ids if bid})
+
+    form_map: dict = {}      # bdl_id -> (composite_z, confidence)
+    score_30d_map: dict = {}  # bdl_id -> score_0_100 (talent fallback)
+    if bdl_ids:
+        from sqlalchemy import func
+        _ps_rows = (
+            db.query(PlayerScore)
+            .filter(
+                PlayerScore.bdl_player_id.in_(bdl_ids),
+                PlayerScore.window_days.in_([14, 30]),
+                PlayerScore.as_of_date <= target_date,
+            )
+            .all()
+        )
+        for r in _ps_rows:
+            if r.window_days == 14 and r.composite_z is not None:
+                form_map[r.bdl_player_id] = (float(r.composite_z), float(r.confidence or 0.0))
+            elif r.window_days == 30 and r.score_0_100 is not None:
+                score_30d_map[r.bdl_player_id] = float(r.score_0_100)
+
+    # ---- Talent from Statcast season leaderboards (xwOBA / xERA) ----
+    # Resolve mlbam_id per player, then batch-query the two Statcast tables.
+    mlbam_ids = []
+    pk_to_mlbam: dict = {}
+    for p in raw_players:
+        pk = p.get("player_key")
+        if not pk or pk not in player_key_to_ids:
+            continue
+        mid = player_key_to_ids[pk].get("mlbam_id")
+        if mid:
+            mlbam_ids.append(str(mid))
+            pk_to_mlbam[pk] = str(mid)
+    mlbam_ids = list(set(mlbam_ids))
+
+    talent_z_map: dict = {}  # mlbam_id_str -> (talent_z, source)
+    if mlbam_ids:
+        try:
+            from backend.models import StatcastBatterMetrics, StatcastPitcherMetrics
+            # Hitter talent: xwOBA Z vs the league mean/std of the fetched cohort.
+            bat_rows = (
+                db.query(StatcastBatterMetrics)
+                .filter(StatcastBatterMetrics.mlbam_id.in_(mlbam_ids))
+                .all()
+            )
+            bat_xwoba = [float(r.xwoba) for r in bat_rows if r.xwoba is not None]
+            if len(bat_xwoba) >= 2:
+                _bmean = sum(bat_xwoba) / len(bat_xwoba)
+                _bvar = sum((x - _bmean) ** 2 for x in bat_xwoba) / len(bat_xwoba)
+                _bstd = _bvar ** 0.5 or 1e-6
+                for r in bat_rows:
+                    if r.xwoba is not None and r.mlbam_id:
+                        talent_z_map[r.mlbam_id] = (
+                            max(-3.0, min(3.0, (float(r.xwoba) - _bmean) / _bstd)),
+                            "statcast",
+                        )
+            # Pitcher talent: xERA Z (lower is better, so negate).
+            pit_rows = (
+                db.query(StatcastPitcherMetrics)
+                .filter(StatcastPitcherMetrics.mlbam_id.in_(mlbam_ids))
+                .all()
+            )
+            pit_xera = [float(r.xera) for r in pit_rows if r.xera is not None]
+            if len(pit_xera) >= 2:
+                _pmean = sum(pit_xera) / len(pit_xera)
+                _pvar = sum((x - _pmean) ** 2 for x in pit_xera) / len(pit_xera)
+                _pstd = _pvar ** 0.5 or 1e-6
+                for r in pit_rows:
+                    if r.xera is not None and r.mlbam_id:
+                        # lower xERA is better -> negate so positive Z = better
+                        z = max(-3.0, min(3.0, -(float(r.xera) - _pmean) / _pstd))
+                        talent_z_map[r.mlbam_id] = (z, "statcast")
+        except Exception as exc:
+            logger.debug("blended_score: Statcast talent load skipped: %s", exc)
+
+    # ---- Matchup from matchup_context (raw SQL — no ORM model) ----
+    matchup_map: dict = {}  # bdl_id -> (matchup_z, matchup_confidence)
+    if bdl_ids:
+        try:
+            from sqlalchemy import text as _sql_text
+            _mc_rows = db.execute(
+                _sql_text(
+                    "SELECT bdl_player_id, matchup_z, matchup_confidence "
+                    "FROM matchup_context "
+                    "WHERE game_date = :gd AND bdl_player_id = ANY(:ids)"
+                ),
+                {"gd": target_date, "ids": bdl_ids},
+            ).fetchall()
+            for row in _mc_rows:
+                mz = row.matchup_z if row.matchup_z is not None else None
+                mc = row.matchup_confidence if row.matchup_confidence is not None else None
+                if mz is not None:
+                    matchup_map[row.bdl_player_id] = (float(mz), mc)
+        except Exception as exc:
+            logger.debug("blended_score: matchup_context load skipped: %s", exc)
+
+    # ---- Assemble blended score per player ----
+    for p in raw_players:
+        pk = p.get("player_key")
+        if not pk or pk not in player_key_to_ids:
+            continue
+        ids = player_key_to_ids[pk]
+        bdl_id = ids.get("bdl_id")
+        mlbam_str = pk_to_mlbam.get(pk)
+
+        # Form
+        form_z = None
+        confidence = 0.0
+        if bdl_id and bdl_id in form_map:
+            form_z, confidence = form_map[bdl_id]
+
+        # Talent: prefer Statcast, fall back to 30-day score -> Z
+        talent_z = None
+        talent_source = "none"
+        if mlbam_str and mlbam_str in talent_z_map:
+            talent_z, talent_source = talent_z_map[mlbam_str]
+        elif bdl_id and bdl_id in score_30d_map:
+            talent_z = percentile_to_z(score_30d_map[bdl_id])
+            talent_source = "score_30d"
+
+        # Matchup
+        matchup_z = None
+        matchup_conf = None
+        if bdl_id and bdl_id in matchup_map:
+            matchup_z, matchup_conf = matchup_map[bdl_id]
+
+        result = compute_blended_score(
+            talent_z=talent_z,
+            form_z=form_z,
+            confidence=confidence,
+            matchup_z=matchup_z,
+            matchup_confidence=matchup_conf,
+            talent_source=talent_source,
+        )
+        blended[pk] = result
+
+    return blended
 
 
 @router.post("/api/fantasy/roster/optimize", response_model=RosterOptimizeResponse)
@@ -5201,9 +5444,9 @@ async def optimize_roster(
     try:
         raw_players = client.get_roster(team_key=team_key)
     except YahooAuthError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=_safe_yahoo_error_message(exc)) from exc
     except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=_safe_yahoo_error_message(exc)) from exc
 
     # Validate roster player data structure before processing
     # This catches data corruption early and provides actionable error messages
@@ -5366,6 +5609,37 @@ async def optimize_roster(
             "is_fallback": score_source == "projection_fallback",
         })
 
+    # ---- P28: Talent-anchored blended score (feature-flagged) ----
+    # When optimize.blended_score is ON, replace the 14-day-only lineup_score
+    # with the talent/form/matchup blend. The blended final_z is an absolute
+    # (league-relative) Z, so it does NOT need the min-max re-normalization
+    # below (which is only for the legacy relative-percentile path).
+    from backend.services.config_service import is_flag_enabled as _is_flag_on
+    _use_blended = _is_flag_on("optimize.blended_score")
+    _blended_results: dict = {}
+    if _use_blended:
+        try:
+            from backend.services.blended_score import z_to_percentile
+            _blended_results = _resolve_blended_signals(
+                db=db,
+                raw_players=raw_players,
+                player_key_to_ids=player_key_to_ids,
+                player_scores_map_14d=player_scores_map,
+                target_date=target_date,
+            )
+            for p in player_data:
+                pk = p["player_key"]
+                if pk in _blended_results:
+                    bres = _blended_results[pk]
+                    p["lineup_score"] = round(z_to_percentile(bres.final_z), 2)
+                    p["score_source"] = "blended"
+                    # Stash the breakdown for the response (P4 wiring reads this)
+                    p["_blended"] = bres
+        except Exception as exc:
+            logger.warning("blended_score computation failed, falling back to legacy: %s", exc)
+            _use_blended = False
+            _blended_results = {}
+
     # TASK-5: Normalize hitter and pitcher scores to a common 0-100 scale
     # before routing to separate solver tracks.
     #
@@ -5397,15 +5671,20 @@ async def optimize_roster(
     # Split into groups, normalize, then re-merge.  This ensures the ILP solver and
     # the greedy pitcher sort both use position-relative scores, making the response
     # scores directly comparable across groups.
+    #
+    # P28: When the blended score is active, final_z is already an absolute
+    # (league-relative) Z converted to 0-100, so the min-max re-normalization is
+    # skipped — it would destroy the cross-position comparability we just gained.
     _hitter_group = [p for p in player_data if not (bool(p.get("eligible_positions")) and {pos.upper() for pos in p["eligible_positions"]}.issubset(_PITCHER_POSITIONS_SET))]
     _pitcher_group = [p for p in player_data if (bool(p.get("eligible_positions")) and {pos.upper() for pos in p["eligible_positions"]}.issubset(_PITCHER_POSITIONS_SET))]
-    _normalize_group_scores(_hitter_group)
-    _normalize_group_scores(_pitcher_group)
-    # Rebuild player_data in original order with normalized scores
-    _norm_map = {p["player_key"]: p["lineup_score"] for p in _hitter_group + _pitcher_group}
-    for p in player_data:
-        if p["player_key"] in _norm_map:
-            p["lineup_score"] = _norm_map[p["player_key"]]
+    if not _use_blended:
+        _normalize_group_scores(_hitter_group)
+        _normalize_group_scores(_pitcher_group)
+        # Rebuild player_data in original order with normalized scores
+        _norm_map = {p["player_key"]: p["lineup_score"] for p in _hitter_group + _pitcher_group}
+        for p in player_data:
+            if p["player_key"] in _norm_map:
+                p["lineup_score"] = _norm_map[p["player_key"]]
 
     # Split into hitters and pitchers based on eligible_positions
     # Players with NO positions go to neither group → will be assigned to bench
@@ -5531,6 +5810,30 @@ async def optimize_roster(
     _OF_SOLVER_SLOTS = {PositionSlot.OUTFIELD_1, PositionSlot.OUTFIELD_2, PositionSlot.OUTFIELD_3}
     placed_keys: set = set()
     starters = []
+
+    _player_by_key = {p["player_key"]: p for p in player_data}
+
+    # P28: helper to extract optional blended-score breakdown fields for the response.
+    def _blended_fields(player_key: str) -> dict:
+        pd = _player_by_key.get(player_key)
+        if not pd or "_blended" not in pd:
+            return {}
+        bres = pd["_blended"]
+        from backend.contracts import ScoreBreakdown
+        return {
+            "score_breakdown": ScoreBreakdown(
+                final_z=round(bres.final_z, 4),
+                talent_z=round(bres.talent_z, 4) if bres.talent_z is not None else None,
+                form_z=round(bres.form_z, 4) if bres.form_z is not None else None,
+                form_z_shrunk=round(bres.form_z_shrunk, 4) if bres.form_z_shrunk is not None else None,
+                matchup_z=round(bres.matchup_z, 4) if bres.matchup_z is not None else None,
+                confidence=round(bres.confidence, 4),
+                talent_source=bres.talent_source,
+                low_confidence=bres.low_confidence,
+            ),
+            "low_confidence": bres.low_confidence,
+        }
+
     for sa in hitter_assignments:
         slot_str = "OF" if sa.slot in _OF_SOLVER_SLOTS else sa.slot.value
         starters.append(PlayerSlotAssignment(
@@ -5539,6 +5842,7 @@ async def optimize_roster(
             assigned_slot=slot_str,
             lineup_score=round(sa.score, 2),
             reasoning=sa.reason or f"Score {sa.score:.1f}",
+            **_blended_fields(sa.player_id),
         ))
         placed_keys.add(sa.player_id)
 
@@ -5558,6 +5862,7 @@ async def optimize_roster(
                     assigned_slot=slot,
                     lineup_score=round(player["lineup_score"], 2),
                     reasoning=f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), eligible for {slot}",
+                    **_blended_fields(player["player_key"]),
                 ))
                 pitcher_slot_fill[slot] += 1
                 placed_keys.add(player["player_key"])
@@ -5575,7 +5880,11 @@ async def optimize_roster(
                 player_name=player["name"],
                 assigned_slot="BN",
                 lineup_score=round(player["lineup_score"], 2),
-                reasoning=f"Bench: score {player['lineup_score']:.1f}",
+                reasoning=(
+                    f"Bench: score {player['lineup_score']:.1f} "
+                    f"({player.get('score_source', 'default')})"
+                ),
+                **_blended_fields(player["player_key"]),
             ))
             placed_keys.add(player["player_key"])
         else:
@@ -5584,12 +5893,16 @@ async def optimize_roster(
     total_score = sum(a.lineup_score for a in starters) if starters else 0.0
 
     # Build message with staleness warning if needed
-    # Use actual_data_date to reflect real data freshness, not requested date
-    base_msg = f"Optimized lineup for {actual_data_date}"
+    # Normalize actual_data_date to string for comparison and rendering
+    # (actual_data_date may be a date object from PlayerScore.as_of_date or a string fallback)
+    actual_date_str = actual_data_date.isoformat() if isinstance(actual_data_date, date) else str(actual_data_date)
+    target_date_str = str(target_date)
+
+    base_msg = f"Optimized lineup for {actual_date_str}"
     if staleness_warning:
         base_msg += " (Warning: Using projection fallback for some players - player_scores stale)"
-    elif actual_data_date != target_date:
-        base_msg += f" (Note: Data from {actual_data_date}, not requested {target_date})"
+    elif actual_date_str != target_date_str:
+        base_msg += f" (Note: Data from {actual_date_str}, not requested {target_date_str})"
     elif fallback_count:
         base_msg += f" (Used projection fallback for {fallback_count} player{'s' if fallback_count != 1 else ''})"
     if il_player_count:
@@ -5827,6 +6140,40 @@ def _is_il_designated(player: dict, injury_overlay: Optional[InjuryOverlay] = No
     return False
 
 
+# Injury statuses that make a player ELIGIBLE for an IL slot placement.
+# Broader than _is_il_designated (which gates IL→active moves and intentionally
+# excludes DTD/OUT): the eligibility gate for active→IL moves should let any
+# player with an active injury status take an IL slot. Aligned with the
+# frontend's isILEligible() and dashboard_service.injury_statuses.
+_IL_ELIGIBLE_STATUSES = frozenset({
+    "IL", "IL10", "IL15", "IL60",
+    "DTD", "OUT", "NA", "DAY-TO-DAY", "QUESTIONABLE", "INJURED",
+})
+
+
+def _has_injury_status(player: dict) -> bool:
+    """Return True if a player has any active injury status, qualifying them
+    to be placed in an IL/IL60 slot.
+
+    This is broader than _is_il_designated (which only matches true Yahoo
+    IL/DL/NA designations for the reverse-direction guard). The eligibility
+    gate for active→IL moves accepts DTD, OUT, NA, and any non-empty
+    injury_note — matching the frontend isILEligible() contract.
+    """
+    raw_status = player.get("status")
+    if raw_status is not None and not isinstance(raw_status, bool):
+        status_upper = str(raw_status).strip().upper()
+        if status_upper and status_upper in _IL_ELIGIBLE_STATUSES:
+            return True
+    # Any descriptive injury note also qualifies the player for an IL slot.
+    raw_note = player.get("injury_note")
+    if raw_note is not None and not isinstance(raw_note, bool):
+        note_str = str(raw_note).strip()
+        if note_str:
+            return True
+    return False
+
+
 def _validate_move(
     player: dict,
     source_slot: Optional[str],
@@ -5842,10 +6189,13 @@ def _validate_move(
     note near the recommendations endpoint), so occupying an IL slot counts as
     an IL designation even without a status string.
 
-    Layer 2 — target slot: IL/IL60 share a combined capacity; a move into a full
-    IL group is blocked. `roster_state` should reflect the positions the move is
-    validated against (for bulk batches, the batch's projected end-state, so a
-    batch that vacates and refills an IL slot is not false-blocked).
+    Layer 2 — target slot: IL/IL60 eligibility first (a healthy player with no
+    injury designation cannot be moved into an IL slot — yields a clear "not
+    eligible for IL" 400 rather than a misleading capacity error), then IL/IL60
+    share a combined capacity; a move into a full IL group is blocked.
+    `roster_state` should reflect the positions the move is validated against
+    (for bulk batches, the batch's projected end-state, so a batch that vacates
+    and refills an IL slot is not false-blocked).
 
     Layer 3 — swap-partner rules live in move_roster_player's swap logic:
     multi-occupancy slots (BN/IL/IL60) never displace an occupant, and a
@@ -5871,8 +6221,26 @@ def _validate_move(
             ),
         }
 
-    # Layer 2: IL/IL60 targets must have combined capacity
+    # Layer 2: IL/IL60 targets — eligibility THEN capacity.
+    # A healthy player cannot be parked in an IL slot. This must run BEFORE the
+    # capacity check so the user sees "not eligible for IL" rather than a
+    # misleading "slot full (3/3)" when the IL group happens to be full.
+    # Note: a player already in an IL slot is being moved between IL/IL60 and
+    # is by definition eligible (they got there via an injury designation), so
+    # the eligibility gate only applies to non-IL sources. The eligibility check
+    # uses the broad _has_injury_status (DTD/OUT/NA/injury_note all qualify),
+    # matching the frontend isILEligible() contract — not the narrow
+    # _is_il_designated used for the reverse-direction Layer 1 guard.
     if target_slot in _IL_SLOTS:
+        if not in_il_slot and not _has_injury_status(player):
+            return {
+                "valid": False,
+                "error": (
+                    f"Cannot move {name} to {target_slot} — player is not "
+                    f"eligible for IL (no active injury designation)."
+                ),
+            }
+
         player_key = player.get("player_key")
         occupants = sum(
             1 for p in roster_state
@@ -6379,6 +6747,7 @@ async def get_dashboard(
     return {
         "success": True,
         "timestamp": dashboard.timestamp,
+        "roster_data_available": dashboard.roster_data_available,
         "data": {
             "lineup_gaps": [asdict(g) for g in dashboard.lineup_gaps],
             "lineup_filled_count": dashboard.lineup_filled_count,
@@ -6423,8 +6792,10 @@ async def get_dashboard_streaks(user: str = Depends(verify_api_key)):
     """Get hot/cold streaks for rostered players."""
     service = get_dashboard_service()
     hot, cold = await service._get_streaks(user_id=user)
+    roster_data_available = service._probe_roster_available()
     return {
         "success": True,
+        "roster_data_available": roster_data_available,
         "hot_streaks": [asdict(s) for s in hot[:5]],
         "cold_streaks": [asdict(s) for s in cold[:5]],
     }
@@ -7359,7 +7730,7 @@ async def apply_fantasy_lineup(
         )
     except Exception as exc:
         logger.exception("Error applying lineup with ResilientYahooClient")
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=_safe_yahoo_error_message(exc)) from exc
 
     if not result.success:
         detail = {
@@ -8729,14 +9100,18 @@ async def get_constraint_budget(
     il_used = 0
     il_total = 3  # Yahoo standard IL slots
     acquisition_limit = 8  # Yahoo standard adds
+    il_data_available = False  # mirrors ip_data_available — False when Yahoo roster fetch fails
 
     # 1. Count IL players from roster
     try:
         roster = client.get_roster(team_key=team_key)
         il_count = sum(1 for p in roster if p.get("selected_position") in ["IL", "IL60"])
         il_used = il_count
+        il_data_available = True
     except (YahooAuthError, YahooAPIError):
-        pass  # Fall back to 0
+        # Roster fetch failed — leave il_used=0 but flag data as unavailable so
+        # the frontend renders "data unavailable" instead of a false "0/3 · 3 open".
+        logger.warning("budget: IL roster fetch failed — il_data_available=False")
 
     # 2. Count acquisitions since Monday 00:00 ET (Yahoo matchup week start)
     transactions: list = []
@@ -8956,6 +9331,7 @@ async def get_constraint_budget(
             "acquisition_warning": budget.acquisition_warning,
             "il_used": budget.il_used,
             "il_total": budget.il_total,
+            "il_data_available": il_data_available,
             "ip_accumulated": budget.ip_accumulated,
             "ip_minimum": budget.ip_minimum,
             "ip_pace": budget.ip_pace.value,

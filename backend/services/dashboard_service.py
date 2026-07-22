@@ -32,7 +32,7 @@ from backend.services.injury_overlay import (
     load_injury_overlays_for_yahoo_players,
 )
 from backend.services.category_comparator import compare_category
-from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError, YahooAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,12 @@ class DashboardData:
     # Settings
     preferences: Dict[str, Any]
     data_freshness: Optional[Dict[str, Any]] = None
+    # True when the Yahoo roster fetch succeeded. When False, the empty
+    # lineup_gaps / injury_flags / streaks are due to data unavailability, NOT
+    # a genuine "no issues" state — the frontend must render "data unavailable"
+    # rather than a false all-clear (sev-1 2026-07-22: Yahoo 403 cascade showed
+    # "No active injury alerts" when 5 pitchers were actually injured).
+    roster_data_available: bool = True
 
 
 class DashboardService:
@@ -182,6 +188,27 @@ class DashboardService:
                 self.reliability_engine.record_source_failure(DataSource.YAHOO_API, str(e))
                 return None
         return self._yahoo_client
+
+    def _probe_roster_available(self) -> bool:
+        """Single ground-truth check: can we fetch the Yahoo roster right now?
+
+        Returns False when the Yahoo client is missing or the roster call raises
+        (auth error, 403, etc.). Used to flag the dashboard response so the
+        frontend can distinguish a genuine 'no issues' state from a Yahoo outage
+        that left the injury/lineup/streak sections empty.
+        """
+        client = self._get_yahoo_client()
+        if not client:
+            return False
+        try:
+            client.get_roster()
+            return True
+        except (YahooAuthError, YahooAPIError) as exc:
+            logger.warning("dashboard roster probe failed: %s", exc)
+            return False
+        except Exception as exc:
+            logger.warning("dashboard roster probe unexpected error: %s", exc)
+            return False
     
     async def get_dashboard(
         self,
@@ -208,7 +235,13 @@ class DashboardService:
         try:
             # Load user preferences
             prefs = self._get_or_create_preferences(db, user_id)
-            
+
+            # Probe Yahoo roster availability once so the frontend can
+            # distinguish a genuine "no issues" state from a Yahoo outage that
+            # left lineup_gaps/injury_flags/streaks empty. The individual
+            # _get_* methods still fail gracefully on their own.
+            roster_data_available = self._probe_roster_available()
+
             # Gather all dashboard components in parallel
             (
                 (lineup_gaps, filled, total),
@@ -248,6 +281,7 @@ class DashboardService:
                 two_start_pitchers=two_starts,
                 preferences=self._prefs_to_dict(prefs),
                 data_freshness=_dashboard_freshness.model_dump(),
+                roster_data_available=roster_data_available,
             )
         
         finally:
@@ -784,6 +818,34 @@ class DashboardService:
             # Status mappings
             injury_statuses = {"IL", "IL10", "IL15", "IL60", "DTD", "OUT", "NA"}
 
+            def _is_injury_status(s: str) -> bool:
+                """Match a status string against the injury set, tolerating the
+                overlay's longhand formats (e.g. "15-Day-IL", "60-Day-IL",
+                "10-Day-IL", "Day-to-Day"). Normalizes to a compact uppercase
+                form before comparing so overlay statuses don't slip into the
+                healthy bucket (UAT 2026-07-17: Kyle Harrison IL15, Soto/Perdomo
+                DTD were miscounted as healthy because the overlay emits
+                "15-Day-IL"/"Day-to-Day" which don't literally match the set).
+                """
+                if not s:
+                    return False
+                if s in injury_statuses:
+                    return True
+                norm = s.upper().replace(" ", "").replace("-", "")
+                # Map longhand overlay formats back onto the canonical codes
+                if "DAYTODAY" in norm or "DTD" in norm:
+                    return "DTD" in injury_statuses
+                for code in ("IL60", "IL15", "IL10"):
+                    if code in norm or code.replace("IL", "DAYIL").replace("IL", "") + "DAYIL" in norm:
+                        return code in injury_statuses
+                # "60DAYIL", "15DAYIL", "10DAYIL" (from "60-Day-IL" etc.)
+                for days in ("60DAYIL", "15DAYIL", "10DAYIL"):
+                    if days in norm:
+                        return True
+                if "IL" in norm:
+                    return "IL" in injury_statuses
+                return False
+
             for player in roster:
                 raw_status = player.get("status", "")
                 # Yahoo occasionally sends boolean True for active players — coerce to string
@@ -792,37 +854,52 @@ class DashboardService:
                 else:
                     status = str(raw_status) if raw_status else ""
                 overlay = injury_overlays.get(player.get("player_key") or "")
+
+                # NEVER let overlay remove an injury designation — overlay may only refine, not erase
+                # If overlay has a status, use it; otherwise keep Yahoo status
                 if overlay and getattr(overlay, "status", None):
-                    status = overlay.status
+                    overlay_status = overlay.status
+                    # Only use overlay status if it's not empty/blank
+                    if overlay_status and overlay_status.strip():
+                        status = overlay_status
+
                 selected_pos = player.get("selected_position", "")
 
-                # Check if player is injured
-                is_injured = status in injury_statuses or selected_pos in ("IL", "IL10", "IL15", "IL60")
-                
+                # Check if player is injured — include DTD, IL, OUT, NA statuses.
+                # Uses the normalization helper so overlay longhand ("15-Day-IL",
+                # "Day-to-Day") is recognized, not just the canonical short codes.
+                is_injured = _is_injury_status(status) or selected_pos in ("IL", "IL10", "IL15", "IL60")
+
                 if is_injured:
                     injured += 1
 
                     # Check if player is already in an IL slot
                     already_in_il_slot = selected_pos in ("IL", "IL10", "IL15", "IL60")
 
-                    # Determine severity - only recommend IL move if NOT already in IL slot
+                    # Skip flag entirely for players already correctly placed in IL slots
                     if already_in_il_slot:
-                        # Player already in IL slot - no action needed
-                        severity = "info"
-                        action = "Monitor status"
-                    elif status in ("IL", "IL60"):
+                        # No actionable alert needed — player is already where they should be
+                        continue
+
+                    # Determine severity for players needing action.
+                    # Normalize overlay longhand to a canonical bucket for severity.
+                    norm_status = status.upper().replace(" ", "").replace("-", "")
+                    if "IL60" in norm_status or "60DAYIL" in norm_status or status in ("IL", "IL60"):
                         severity = "critical"
                         action = "Move to IL slot immediately"
-                    elif status in ("IL10", "IL15"):
+                    elif "IL15" in norm_status or "15DAYIL" in norm_status or status in ("IL10", "IL15"):
                         severity = "warning"
                         action = "Consider moving to IL slot"
-                    elif status == "DTD":
+                    elif "IL10" in norm_status or "10DAYIL" in norm_status:
+                        severity = "warning"
+                        action = "Consider moving to IL slot"
+                    elif status == "DTD" or "DAYTODAY" in norm_status:
                         severity = "warning"
                         action = "Check lineup status before lock"
                     else:
                         severity = "info"
                         action = "Monitor status"
-                    
+
                     flags.append(InjuryFlag(
                         player_id=player.get("player_id", ""),
                         name=player.get("name", "Unknown"),

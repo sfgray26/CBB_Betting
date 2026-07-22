@@ -268,7 +268,9 @@ def _clamp_counts(totals: np.ndarray, categories: list[str]) -> np.ndarray:
     """
     result = totals.copy()
     for j, cat in enumerate(categories):
-        if cat in _COUNT_CATEGORIES:
+        # Lower-is-better count cats (K_B) are direction-normalized into signed
+        # z-space by the caller — clamping at 0 would erase the inverted anchor.
+        if cat in _COUNT_CATEGORIES and cat.upper() not in LOWER_IS_BETTER:
             result[:, j] = np.maximum(result[:, j], 0.0)
     return result
 
@@ -362,7 +364,16 @@ def simulate_weekly_matchup(
         my_means = my_means * remaining_fraction
         opp_means = opp_means * remaining_fraction
 
-    # Fixed offset from current scoreboard stats
+    # Fixed offset from current scoreboard stats.
+    # The z-score inputs are direction-normalized (higher = better), but raw
+    # scoreboard anchors are NOT — for LOWER_IS_BETTER cats (L, K_B, ERA, WHIP,
+    # HR_P) a larger raw value is WORSE. Sign-invert those anchors so both
+    # components share one scale; otherwise the sim ranks all lower-is-better
+    # categories backwards once the week is in progress (UAT 2026-07-22: ahead
+    # 1-4 in L scored BEHIND/PUNT?, up 22-35 in K_B scored LOST).
+    _direction = np.array(
+        [-1.0 if cat.upper() in LOWER_IS_BETTER else 1.0 for cat in categories]
+    )
     _my_offset = np.zeros(n_cats)
     _opp_offset = np.zeros(n_cats)
     if my_current_stats:
@@ -371,6 +382,8 @@ def simulate_weekly_matchup(
     if opp_current_stats:
         for j, cat in enumerate(categories):
             _opp_offset[j] = float(opp_current_stats.get(cat, 0.0))
+    _my_offset = _my_offset * _direction
+    _opp_offset = _opp_offset * _direction
 
     if my_means.shape[0] > 0:
         my_noise = rng.normal(0.0, my_stds, size=(n_sims,) + my_means.shape)
@@ -405,11 +418,16 @@ def simulate_weekly_matchup(
 
     # Build category_projections array for frontend compatibility
     # Frontend expects: {category: string, my_proj: number, opp_proj: number, win_prob: number}
+    # Re-invert direction-normalized totals for lower-is-better cats so displayed
+    # projections read as real stat values (e.g. "1→4" losses, not "-1→-4").
+    _display_sign = [
+        -1.0 if cat.upper() in LOWER_IS_BETTER else 1.0 for cat in categories
+    ]
     category_projections = [
         {
             "category": cat.upper(),
-            "my_proj": round(float(my_totals[:, j].mean()), 2),
-            "opp_proj": round(float(opp_totals[:, j].mean()), 2),
+            "my_proj": round(float(my_totals[:, j].mean()) * _display_sign[j], 2),
+            "opp_proj": round(float(opp_totals[:, j].mean()) * _display_sign[j], 2),
             "win_prob": round(float(cat_wins[:, j].mean()), 4),
         }
         for j, cat in enumerate(categories)

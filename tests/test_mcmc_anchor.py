@@ -71,3 +71,79 @@ def test_data_quality_flag_ok():
     roster = [_make_player(f"P{i}", hr=0.5) for i in range(5)]
     result = simulate_weekly_matchup(roster, roster, categories=["hr_b"], n_sims=200, seed=1)
     assert result["data_quality"] == "ok"
+
+
+def _make_pitcher(name: str, l_score: float = 0.0, k_b_score: float = 0.0) -> dict:
+    return {
+        "name": name,
+        "positions": ["SP"],
+        "starts_this_week": 1,
+        "cat_scores": {"l": l_score, "k_b": k_b_score},
+    }
+
+
+def test_anchor_lower_is_better_losses_lead_preserved():
+    """Regression (UAT 2026-07-22): ahead 1-4 in L mid-week must score as a WIN.
+
+    Raw scoreboard anchors for LOWER_IS_BETTER cats were previously added
+    without sign inversion, so the team with FEWER losses got the smaller
+    total and lost every sim (scored BEHIND + PUNT? in War Room).
+    """
+    my_roster = [_make_pitcher("A"), _make_pitcher("B")]
+    opp_roster = [_make_pitcher("C"), _make_pitcher("D")]
+
+    result = simulate_weekly_matchup(
+        my_roster, opp_roster,
+        categories=["l"],
+        my_current_stats={"l": 1.0},
+        opp_current_stats={"l": 4.0},
+        remaining_fraction=0.3,
+        n_sims=2000,
+        seed=42,
+    )
+    wp = result["category_win_probs"]["l"]
+    assert wp > 0.80, f"Expected >0.80 win prob for L with 1-vs-4 lead, got {wp}"
+
+
+def test_anchor_lower_is_better_batter_ks_lead_preserved():
+    """Regression (UAT 2026-07-22): up 22-35 in K_B (fewer Ks) must score as a WIN.
+
+    K_B is also in _COUNT_CATEGORIES — the zero-clamp must not erase the
+    sign-inverted anchor.
+    """
+    my_roster = [_make_pitcher("A"), _make_pitcher("B")]
+    opp_roster = [_make_pitcher("C"), _make_pitcher("D")]
+
+    result = simulate_weekly_matchup(
+        my_roster, opp_roster,
+        categories=["k_b"],
+        my_current_stats={"k_b": 22.0},
+        opp_current_stats={"k_b": 35.0},
+        remaining_fraction=0.3,
+        n_sims=2000,
+        seed=42,
+    )
+    wp = result["category_win_probs"]["k_b"]
+    assert wp > 0.80, f"Expected >0.80 win prob for K_B with 22-vs-35 lead, got {wp}"
+
+
+def test_lower_is_better_display_projections_positive():
+    """my_proj/opp_proj for lower-is-better cats must display as real stat values."""
+    my_roster = [_make_pitcher("A")]
+    opp_roster = [_make_pitcher("B")]
+
+    result = simulate_weekly_matchup(
+        my_roster, opp_roster,
+        categories=["l"],
+        my_current_stats={"l": 1.0},
+        opp_current_stats={"l": 4.0},
+        remaining_fraction=0.3,
+        n_sims=500,
+        seed=7,
+    )
+    proj = result["category_projections"][0]
+    assert proj["category"] == "L"
+    assert proj["my_proj"] > 0, f"my_proj should display ≈ current losses, got {proj['my_proj']}"
+    assert proj["opp_proj"] > proj["my_proj"], (
+        f"opp (4 L) should display higher than mine (1 L): {proj}"
+    )

@@ -100,3 +100,57 @@ async def test_no_il_crisis_when_fewer_than_three_injured():
 
     crisis_gaps = [g for g in gaps if g.position == "ROSTER"]
     assert len(crisis_gaps) == 0
+
+
+@pytest.mark.asyncio
+async def test_injury_counts_normalize_overlay_longhand():
+    """UAT 2026-07-17: overlay longhand statuses ("15-Day-IL", "Day-to-Day")
+    must be counted as INJURED, not healthy. Kyle Harrison (15-Day-IL) and
+    Soto/Perdomo (Day-to-Day) were slipping into the healthy bucket because the
+    overlay status string didn't literally match the canonical short codes.
+    """
+    from backend.services.dashboard_service import DashboardService
+
+    # Roster players keyed the way _get_injury_flags reads them: "status" + "name"
+    roster = [
+        # Healthy player — no status, no overlay
+        {"name": "Healthy Aaron", "player_key": "k1", "selected_position": "1B", "status": ""},
+        # IL15 via Yahoo short code
+        {"name": "Kyle Harrison", "player_key": "k2", "selected_position": "SP", "status": "IL15"},
+        # DTD via Yahoo short code
+        {"name": "Juan Soto", "player_key": "k3", "selected_position": "RF", "status": "DTD"},
+        # OUT
+        {"name": "Gabe Perdomo", "player_key": "k4", "selected_position": "SS", "status": "OUT"},
+    ]
+
+    # Overlays keyed by player_key — emit LONGHAND statuses the way the DB does
+    overlays = {
+        "k2": MagicMock(status="15-Day-IL"),   # longhand IL15
+        "k3": MagicMock(status="Day-to-Day"),  # longhand DTD
+        "k4": MagicMock(status="OUT"),
+    }
+
+    service = DashboardService.__new__(DashboardService)
+    service.reliability_engine = MagicMock()
+    service.reliability_engine.validate_yahoo_roster = MagicMock(
+        return_value=MagicMock(is_valid=True, errors=[])
+    )
+    mock_client = MagicMock()
+    mock_client.get_roster = MagicMock(return_value=roster)
+    service._get_yahoo_client = MagicMock(return_value=mock_client)
+
+    with patch(
+        "backend.services.dashboard_service.load_injury_overlays_for_yahoo_players",
+        return_value=overlays,
+    ), patch("backend.services.dashboard_service.SessionLocal") as mock_sl:
+        mock_db = MagicMock()
+        mock_sl.return_value = mock_db
+
+        flags, healthy, injured = await service._get_injury_flags("user1")
+
+    # Only the truly healthy player lands in the healthy bucket.
+    assert healthy == 1, f"Expected 1 healthy, got {healthy} (longhand overlay miscounted)"
+    # The three injured players (IL15, DTD, OUT) all land in the injured bucket.
+    assert injured == 3, f"Expected 3 injured, got {injured} (longhand overlay miscounted)"
+    # None of the injured players are in an IL slot, so all three produce flags.
+    assert len(flags) == 3

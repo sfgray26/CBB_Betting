@@ -222,6 +222,17 @@ class YahooFantasyClient:
                 "YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET must be set in .env"
             )
 
+        # Refresh token is required for ongoing access (Yahoo uses rotating
+        # refresh tokens; a missing/stale token after a Railway redeploy causes
+        # the exact 403 "application not authorized" cascade on every endpoint).
+        # Warn loudly rather than raise so the one-time --auth flow can still run.
+        if not self._refresh_token:
+            logger.error(
+                "API CLIENT INIT WARNING: YAHOO_REFRESH_TOKEN is NOT SET. "
+                "Every API call will fail with 403 until a refresh token is "
+                "minted via the --auth flow and set in Railway env vars."
+            )
+
         logger.info("API CLIENT INIT SUCCESS: YahooFantasyClient - Initialization complete")
 
     # ------------------------------------------------------------------
@@ -365,6 +376,7 @@ class YahooFantasyClient:
         if out_value:
             url = f"{url}?out={out_value}"
 
+        _refreshed_this_call = False
         for attempt in range(3):
             try:
                 resp = self._session.get(
@@ -376,6 +388,16 @@ class YahooFantasyClient:
                 if resp.status_code == 401:
                     # Token may have just expired mid-request
                     self._refresh_access_token()
+                    continue
+                if resp.status_code == 403 and not _refreshed_this_call:
+                    # Yahoo returns 403 (not 401) for some expired/revoked-token
+                    # states. Attempt ONE refresh — if the app grant is truly
+                    # revoked the refresh will raise YahooAuthError (correct), but
+                    # if it's a transient token issue this self-heals instead of
+                    # cascading into a hard 403 on every endpoint.
+                    logger.warning("Yahoo returned 403 — attempting one token refresh")
+                    self._refresh_access_token()
+                    _refreshed_this_call = True
                     continue
                 if resp.status_code in (429, 999):
                     wait = 2 ** attempt
