@@ -152,7 +152,51 @@ sign; `test_mcmc_simulator`, `test_mcmc_simulator_v2`, `test_matchup_preview`,
 **Next up (not done):** P3 Schedule Advantage hardcoded 0/0; V1 waiver latency
 (client-side sort); R2 TBD-stub → honest degraded state; S1 probable-pitcher
 inference tolerance + coverage alert; §0 infra (token persistence, YAHOO_TEAM_KEY).
-**Needs deploy by Codex after review.**
+
+**Claude review + commit — 2026-07-22 (COMMITTED, awaiting Codex deploy):**
+Reviewed Track C, verified green, and committed the full ready working tree as
+`8e1ffed` (branch `stable/cbb-prod`, now 2 commits ahead of origin — the earlier
+`dcb46a9` is also unpushed). The commit bundles Track C with the previously
+Railway-deployed-but-uncommitted remediation batch (Track B + V2/R5/scoring),
+since `fantasy.py` intermixes them. Also rewrote `tests/test_waiver_sort_parameter.py`:
+the prior TDD stub asserted an `available_players` key and `projected_points`
+ordering that never matched the endpoint (real key `top_available`;
+`overall_value`/`projected_points` sort by `z_score` by design — triage §V2). New
+test patches the projection layer to control `z_score` and asserts the real
+contract. Targeted suites green: 137 passed (`test_mcmc_anchor`,
+`test_dashboard_il_crisis`, `test_roster_move_api`, `test_roster_optimize_api`,
+`test_scoring_engine`, `test_scoring_engine_rate_floor`, `test_blended_score`,
+`test_waiver_sort_parameter`). `.zcode/` left untracked (tooling scratch).
+
+**HANDOFF PROMPT — Codex (deploy Track C to Railway production):**
+```
+You are Codex, DevOps for the cbb-edge Fantasy Baseball platform. Deploy the
+committed Track C fixes to Railway production.
+
+Preconditions:
+- Branch stable/cbb-prod is 2 commits ahead of origin: dcb46a9 (earlier roster/
+  war-room fix, already validated) + 8e1ffed (Track C: War Room sim direction,
+  Weekly Preview table, optimizer tooltip). Both are safe to ship.
+- Deploy path options (deploy.yml auto-deploys on push to stable/cbb-prod):
+  either `git push origin stable/cbb-prod` (triggers CI railway up for both
+  services) OR deploy directly: `railway up --service CBB_Betting` (backend) and
+  `railway up --service observant-benevolence` (frontend) from repo root.
+
+Steps:
+1. Confirm working tree is clean at 8e1ffed: `git log --oneline -1` and
+   `git status --short` (only .zcode/ should be untracked).
+2. Deploy backend + frontend (push OR railway up, per above).
+3. Smoke checks after SUCCESS:
+   - backend GET /health -> 200 healthy
+   - GET /api/fantasy/yahoo-health -> 200 status:"healthy"
+   - GET /api/fantasy/matchup-preview (authed) -> Category Projections table has
+     rows with UPPERCASE codes + non-empty Me/Opp (P1 fix)
+   - War Room: a lower-is-better category the team leads (e.g. L, K_B) shows
+     AHEAD/win% > 50%, NOT BEHIND/PUNT (W3 fix)
+4. Report deployment IDs + image shas + smoke results back into HANDOFF.md.
+Do NOT change Railway variables or Yahoo tokens — Track A is already recovered.
+```
+**Deploy path decision: operator chose Codex handoff (Claude does not push/deploy).**
 
 ---
 
