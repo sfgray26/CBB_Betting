@@ -586,13 +586,49 @@ function buildMatchupRows(data: MatchupResponse): { rows: MatchupRow[]; won: num
   return { rows, won, lost, tied }
 }
 
-function MatchupStrip({ matchup }: { matchup: MatchupResponse | null }) {
+function MatchupStrip({
+  matchup,
+  onRetry,
+  isFetching = false,
+}: {
+  matchup: MatchupResponse | null
+  onRetry?: () => void
+  isFetching?: boolean
+}) {
   if (!matchup) {
     return (
       <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
         <div className="flex items-center gap-2 text-text-muted">
           <Swords className="h-3.5 w-3.5" />
           <span className="text-xs">Loading matchup data…</span>
+        </div>
+      </div>
+    )
+  }
+
+  // Degraded/stub response — Yahoo unavailable, no matchup published, or team
+  // not found. Render an honest notice + retry instead of a category grid whose
+  // empty stats would otherwise read as a real all-tied 0-0 matchup (§R2).
+  if (matchup.degraded) {
+    return (
+      <div className="bg-bg-surface border border-status-bubble/30 rounded-lg p-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 text-status-bubble">
+            <Swords className="h-3.5 w-3.5" />
+            <span className="text-xs font-semibold">
+              {matchup.message || 'Matchup data temporarily unavailable.'}
+            </span>
+          </div>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              disabled={isFetching}
+              className="text-[10px] font-semibold px-2 py-1 rounded border border-border-subtle text-text-secondary hover:text-text-primary hover:border-accent-gold/40 disabled:opacity-50"
+            >
+              {isFetching ? 'Retrying…' : 'Retry'}
+            </button>
+          )}
         </div>
       </div>
     )
@@ -1446,7 +1482,7 @@ export default function RosterPage() {
           </span>
         </div>
       ) : matchup.data ? (
-        <MatchupStrip matchup={matchup.data} />
+        <MatchupStrip matchup={matchup.data} onRetry={matchup.refetch} isFetching={matchup.isFetching} />
       ) : null}
 
       {/* Losing categories callout — action bridge to waiver wire */}

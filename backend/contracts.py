@@ -595,7 +595,11 @@ class MatchupPreviewResponse(BaseModel):
     overall_win_prob: Optional[float] = None
     category_projections: List[MatchupPreviewCategoryProjection]
     weak_categories: List[WeakCategory]
-    schedule_advantage: ScheduleAdvantage
+    # None when a real two-sided games-scheduled comparison can't be computed
+    # (this endpoint sims vs a league-average baseline and never fetches the
+    # opponent's roster). Frontend hides the Schedule Advantage card when null —
+    # better than the old hardcoded 0/0 stub that read as a real "0 games" tie.
+    schedule_advantage: Optional[ScheduleAdvantage] = None
     message: Optional[str] = None
 
     class Config:

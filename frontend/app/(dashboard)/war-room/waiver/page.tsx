@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import type { WaiverAvailablePlayer, WaiverResponse, WaiverRosterPlayer, WaiverRecommendation, DropPlayerOut, CategoryDelta } from '@/lib/types'
-import { evaluateCategoryOutcome, isLowerBetterCategory, INJURY_STATUS_LABELS } from '@/lib/types'
+import { evaluateCategoryOutcome, isLowerBetterCategory, INJURY_STATUS_LABELS, signalLabel } from '@/lib/types'
 import {
   ListFilter, Loader2, AlertCircle, TrendingUp,
   AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
@@ -270,7 +270,7 @@ function PlayerRow({ player, rosterPlayer }: {
           <div className="flex gap-1 mt-1 flex-wrap">
             {player.statcast_signals.map((sig) => (
               <span key={sig} className="text-[10px] px-1.5 py-0.5 bg-status-safe/10 text-status-safe border border-status-safe/20 rounded">
-                {sig}
+                {signalLabel(sig)}
               </span>
             ))}
           </div>
@@ -435,7 +435,7 @@ function AddPanel({ rec }: { rec: WaiverRecommendation }) {
           <span className="text-status-safe">{fa.starts_this_week}-start</span>
         )}
         {rec.statcast_signals.map((sig) => (
-          <span key={sig} className="text-accent-gold">[{sig}]</span>
+          <span key={sig} className="text-accent-gold">{signalLabel(sig)}</span>
         ))}
       </div>
       {fa.availability_note && (
@@ -665,11 +665,14 @@ function WaiverPageInner() {
     refetchInterval: 5 * 60_000,
   })
 
+  // Fetch once — sort is applied client-side below so toggling Match Score vs
+  // Overall Value is instant instead of triggering a fresh 10s+ Yahoo round-trip
+  // on every click (§V1). `sort` is intentionally NOT in the query key.
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['waiver', sort],
+    queryKey: ['waiver'],
     queryFn: async () => {
       try {
-        return await endpoints.getWaiver(sort)
+        return await endpoints.getWaiver('need_score')
       } catch (e) {
         console.error('Waiver fetch failed:', e)
         throw e
@@ -679,6 +682,19 @@ function WaiverPageInner() {
     retry: 1,
     retryDelay: 2000,
   })
+
+  // Client-side sort of the small (~25-50 row) candidate array. "Overall Value"
+  // (projected_points) orders by the season-long composite z_score, matching the
+  // backend's intended semantics (projected_points is vestigial there).
+  const sortPlayers = (players: WaiverAvailablePlayer[]) => {
+    const arr = [...players]
+    if (sort === 'projected_points') {
+      arr.sort((a, b) => (b.z_score ?? -Infinity) - (a.z_score ?? -Infinity))
+    } else {
+      arr.sort((a, b) => (b.need_score ?? -Infinity) - (a.need_score ?? -Infinity))
+    }
+    return arr
+  }
 
   const filterPlayers = (players: WaiverAvailablePlayer[]) => {
     if (posFilter === 'All') return players
@@ -723,7 +739,9 @@ function WaiverPageInner() {
     )
   }
 
-  const topAvailable = filterPlayers(data?.top_available ?? [])
+  const topAvailable = sortPlayers(filterPlayers(data?.top_available ?? []))
+  // Two-start pitchers keep their server-side quality ordering (the sort toggle
+  // never reordered them); only position-filter them.
   const twoStarters = filterPlayers(data?.two_start_pitchers ?? [])
   const rosterCtx = data?.roster_context ?? {}
   const activeRosterPlayer = posFilter !== 'All' ? (rosterCtx[posFilter] ?? null) : null

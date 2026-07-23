@@ -485,6 +485,28 @@ export const SCORE_SOURCE_LABELS: Record<string, string> = {
 }
 
 /**
+ * Human-readable labels for Statcast signal chips (backend
+ * build_statcast_signals). Avoids surfacing raw SCREAMING_CASE enums like
+ * "BUY_LOW" / "HIGH_INJURY_RISK" in the UI (§X1).
+ */
+export const SIGNAL_LABELS: Record<string, string> = {
+  BUY_LOW: 'Buy low',
+  SELL_HIGH: 'Sell high',
+  BREAKOUT: 'Breakout',
+  HIGH_INJURY_RISK: 'Injury risk',
+  LOW_INJURY_RISK: 'Durable',
+  PLUS_STUFF: 'Plus stuff',
+  ELITE_SPEED: 'Elite speed',
+}
+
+/** Humanize a Statcast signal enum, falling back to Title Case for unknowns. */
+export function signalLabel(sig: string): string {
+  return SIGNAL_LABELS[sig] ?? sig
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+/**
  * Humanize a backend data-source identifier for display.
  * Strips noisy internal suffixes and title-cases the rest.
  * e.g. "StatcastPerformances (quality_score)" → "Statcast Performances"
@@ -566,6 +588,9 @@ export interface MatchupResponse {
   opponent: MatchupTeamOut
   is_playoffs: boolean
   message: string | null
+  // True when this is a fallback/stub (Yahoo unavailable, no matchup published,
+  // or team not found) — render a degraded/retry state, not a 0-0 tie (§R2).
+  degraded?: boolean
 }
 
 export interface CategoryProjection {
@@ -605,7 +630,7 @@ export interface MatchupPreviewResponse {
   overall_win_prob: number
   category_projections: CategoryProjection[]
   weak_categories: WeakCategory[]
-  schedule_advantage: ScheduleAdvantage
+  schedule_advantage: ScheduleAdvantage | null
   message?: string | null
 }
 

@@ -288,37 +288,41 @@ export default function WeeklyPreviewPage() {
           </div>
         )}
 
-        {/* Schedule Advantage */}
-        <div className="bg-bg-surface border border-border-subtle rounded-lg p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Calendar className="h-4 w-4 text-accent-gold" />
-            <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">Schedule Advantage</span>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="text-center p-4 bg-bg-elevated rounded-md">
-              <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">My Team</p>
-              <p className="text-2xl font-bold font-mono text-text-primary">{data.schedule_advantage.my_games}</p>
-              <p className="text-xs text-text-muted">games</p>
+        {/* Schedule Advantage — hidden when the backend can't compute a real
+            two-sided games-scheduled comparison (returns null). Showing a
+            hardcoded 0/0 read as a false "0 games" tie. */}
+        {data.schedule_advantage && (
+          <div className="bg-bg-surface border border-border-subtle rounded-lg p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Calendar className="h-4 w-4 text-accent-gold" />
+              <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">Schedule Advantage</span>
             </div>
-            <div className="text-center p-4 bg-bg-elevated rounded-md">
-              <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">{data.opponent_name}</p>
-              <p className="text-2xl font-bold font-mono text-text-primary">{data.schedule_advantage.opponent_games}</p>
-              <p className="text-xs text-text-muted">games</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-center p-4 bg-bg-elevated rounded-md">
+                <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">My Team</p>
+                <p className="text-2xl font-bold font-mono text-text-primary">{data.schedule_advantage.my_games}</p>
+                <p className="text-xs text-text-muted">games</p>
+              </div>
+              <div className="text-center p-4 bg-bg-elevated rounded-md">
+                <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">{data.opponent_name}</p>
+                <p className="text-2xl font-bold font-mono text-text-primary">{data.schedule_advantage.opponent_games}</p>
+                <p className="text-xs text-text-muted">games</p>
+              </div>
             </div>
+            {data.schedule_advantage.my_games !== data.schedule_advantage.opponent_games && (
+              <p className={cn(
+                'text-xs text-center mt-3 font-semibold',
+                data.schedule_advantage.my_games > data.schedule_advantage.opponent_games
+                  ? 'text-status-safe'
+                  : 'text-status-bubble',
+              )}>
+                {data.schedule_advantage.my_games > data.schedule_advantage.opponent_games
+                  ? `+${data.schedule_advantage.my_games - data.schedule_advantage.opponent_games} game advantage`
+                  : `${data.schedule_advantage.my_games - data.schedule_advantage.opponent_games} game disadvantage`}
+              </p>
+            )}
           </div>
-          {data.schedule_advantage.my_games !== data.schedule_advantage.opponent_games && (
-            <p className={cn(
-              'text-xs text-center mt-3 font-semibold',
-              data.schedule_advantage.my_games > data.schedule_advantage.opponent_games
-                ? 'text-status-safe'
-                : 'text-status-bubble',
-            )}>
-              {data.schedule_advantage.my_games > data.schedule_advantage.opponent_games
-                ? `+${data.schedule_advantage.my_games - data.schedule_advantage.opponent_games} game advantage`
-                : `${data.schedule_advantage.my_games - data.schedule_advantage.opponent_games} game disadvantage`}
-            </p>
-          )}
-        </div>
+        )}
       </div>
     </div>
   )

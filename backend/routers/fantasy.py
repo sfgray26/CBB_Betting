@@ -83,7 +83,6 @@ from backend.contracts import (
     FreshnessMetadata,
     MatchupPreviewCategoryProjection,
     MatchupPreviewResponse,
-    ScheduleAdvantage,
     WeakCategory,
     RosterMoveRequest,
     RosterMoveResponse,
@@ -5098,7 +5097,7 @@ async def get_matchup_preview(
             overall_win_prob=None,  # No win % without opponent
             category_projections=[],  # Empty category table
             weak_categories=[],  # No streaming recommendations
-            schedule_advantage=ScheduleAdvantage(my_games=0, opponent_games=0),
+            schedule_advantage=None,  # Hidden — no opponent to compare against
             message="MATCHUP TBD: Opponent not yet published. Projections unavailable until matchup is confirmed.",
         )
 
@@ -5163,7 +5162,12 @@ async def get_matchup_preview(
         overall_win_prob=round(float(sim.get("win_prob", 0.5)), 4),
         category_projections=category_projections,
         weak_categories=weak_categories,
-        schedule_advantage=ScheduleAdvantage(my_games=0, opponent_games=0),
+        # Hidden: a real games-scheduled advantage needs the opponent's roster +
+        # MLB schedule game counts for both sides. This endpoint sims vs a
+        # league-average baseline and never fetches the opponent roster, so a
+        # two-sided count can't be computed here. Returning None hides the card
+        # instead of showing a misleading hardcoded 0/0 (triage §P3).
+        schedule_advantage=None,
         message=None,
     )
 
@@ -6460,7 +6464,16 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             my_team_key = client.get_my_team_key()
         except Exception:
             my_team_key = ""
-    logger.info("Matchup: resolved my_team_key=%s", my_team_key)
+    if not my_team_key:
+        # Empty team key forces the fragile match-by-key path to fail → TBD stub.
+        # Log loudly so this shows up in prod diagnostics (triage §R2c / §0.6:
+        # set YAHOO_TEAM_KEY to avoid the fragile get_my_team_key() resolution).
+        logger.warning(
+            "Matchup: my_team_key resolved to EMPTY — matchup will degrade to TBD "
+            "stub. Set YAHOO_TEAM_KEY or check Yahoo auth."
+        )
+    else:
+        logger.info("Matchup: resolved my_team_key=%s", my_team_key)
 
     _stub_my = MatchupTeamOut(team_key=my_team_key, team_name="My Team", stats={})
     _stub_opp = MatchupTeamOut(team_key="", team_name="TBD", stats={})
@@ -6536,10 +6549,10 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         )
     except (YahooAuthError, YahooAPIError) as exc:
         logger.error("Matchup scoreboard fetch failed: %s", exc)
-        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="Scoreboard unavailable -- Yahoo API error.")
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="Scoreboard unavailable -- Yahoo API error.", degraded=True)
 
     if not matchups:
-        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="No matchup data yet -- season may be starting.")
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="No matchup data yet -- season may be starting.", degraded=True)
 
     week: Optional[int] = None
     is_playoffs = False
@@ -6688,7 +6701,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         )
         return _result
 
-    return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="Your team was not found in the current week's matchup.")
+    return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="Your team was not found in the current week's matchup.", degraded=True)
 
 
 # ============================================================================

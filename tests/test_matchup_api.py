@@ -159,6 +159,9 @@ class TestMatchupEndpointLiveData:
         data = response.json()
         assert "message" in data
         assert "Yahoo API error" in data["message"]
+        # §R2: stub responses must be flagged degraded so the UI shows an honest
+        # error/retry state instead of an all-tied 0-0 matchup.
+        assert data["degraded"] is True
 
     @patch("backend.routers.fantasy.get_yahoo_client")
     def test_matchup_no_data_returns_message(self, mock_client_factory, fantasy_client):
@@ -176,3 +179,55 @@ class TestMatchupEndpointLiveData:
         data = response.json()
         assert "message" in data
         assert "season may be starting" in data["message"]
+        assert data["degraded"] is True
+
+    @patch("backend.routers.fantasy.get_yahoo_client")
+    def test_matchup_team_not_found_is_degraded(self, mock_client_factory, fantasy_client):
+        """My team missing from the scoreboard returns a degraded stub (§R2)."""
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+
+        mock_client = MagicMock(spec=YahooFantasyClient)
+        mock_client.get_my_team_key.return_value = "388.l.123456.t.1"
+        # Scoreboard has a matchup but NOT my team key → falls through to stub.
+        mock_client.get_scoreboard.return_value = [
+            {
+                "week": 12,
+                "teams": [
+                    {"team": {"team_key": "388.l.123456.t.8", "name": "Other A",
+                              "team_stats": {"stats": []}}},
+                    {"team": {"team_key": "388.l.123456.t.9", "name": "Other B",
+                              "team_stats": {"stats": []}}},
+                ],
+            }
+        ]
+        mock_client_factory.return_value = mock_client
+
+        response = fantasy_client.get("/api/fantasy/matchup", headers={"X-API-Key": "test-key"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["degraded"] is True
+        assert "not found" in data["message"].lower()
+
+    @patch("backend.routers.fantasy.get_yahoo_client")
+    def test_matchup_live_data_is_not_degraded(self, mock_client_factory, fantasy_client):
+        """A real matchup with stats must NOT be flagged degraded (§R2)."""
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+
+        mock_client = MagicMock(spec=YahooFantasyClient)
+        mock_client.get_my_team_key.return_value = "388.l.123456.t.1"
+        mock_client.get_scoreboard.return_value = [
+            {
+                "week": 12,
+                "teams": [
+                    {"team": {"team_key": "388.l.123456.t.1", "name": "My Team",
+                              "team_stats": {"stats": [{"stat": {"stat_id": "50", "value": "7"}}]}}},
+                    {"team": {"team_key": "388.l.123456.t.2", "name": "Opponent",
+                              "team_stats": {"stats": [{"stat": {"stat_id": "50", "value": "5"}}]}}},
+                ],
+            }
+        ]
+        mock_client_factory.return_value = mock_client
+
+        response = fantasy_client.get("/api/fantasy/matchup", headers={"X-API-Key": "test-key"})
+        assert response.status_code == 200
+        assert response.json()["degraded"] is False

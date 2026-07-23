@@ -132,8 +132,12 @@ class TestMatchupPreviewEndpoint:
 
         assert isinstance(data["category_projections"], list)
         assert isinstance(data["weak_categories"], list)
-        assert "my_games" in data["schedule_advantage"]
-        assert "opponent_games" in data["schedule_advantage"]
+        # schedule_advantage is now nullable — hidden (None) when a real
+        # two-sided games-scheduled comparison can't be computed (triage §P3).
+        # When present it must carry both team counts.
+        if data["schedule_advantage"] is not None:
+            assert "my_games" in data["schedule_advantage"]
+            assert "opponent_games" in data["schedule_advantage"]
 
     def test_category_projection_fields(self, fantasy_client):
         """CategoryProjection has category and win_prob fields."""

@@ -705,6 +705,11 @@ class MatchupResponse(BaseModel):
     opponent: MatchupTeamOut
     is_playoffs: bool = False
     message: Optional[str] = None
+    # True when this is a fallback/stub response (Yahoo unavailable, no matchup
+    # published, or my team not found) rather than real scoreboard data. The
+    # frontend must render a degraded/retry state instead of treating the empty
+    # stats as a real 0-0 tie (triage §R2).
+    degraded: bool = False
 
 
 class LineupApplyPlayer(BaseModel):
