@@ -174,13 +174,15 @@ You are Codex, DevOps for the cbb-edge Fantasy Baseball platform. Deploy the
 committed fixes to Railway production.
 
 Preconditions:
-- Branch stable/cbb-prod is 4 commits ahead of origin:
+- Branch stable/cbb-prod is 6 commits ahead of origin:
   dcb46a9 (earlier roster/war-room fix, already validated)
   8e1ffed (Track C: War Room sim direction W3, Weekly Preview table P1, optimizer tooltip)
   62e1292 (docs: handoff)
   a7314ba (backlog batch: Schedule Advantage P3, matchup degraded state R2,
            waiver client-side sort V1, Statcast signal labels X1)
-  All are safe to ship.
+  a46e103 (docs: delegation bundles)
+  f14a269 (Tier-3 cosmetics: W2 HR label/color, R4 IL literal, injury title, budget headings)
+  All are safe to ship. Deploy at HEAD f14a269.
 - Deploy path options (deploy.yml auto-deploys on push to stable/cbb-prod):
   either `git push origin stable/cbb-prod` (triggers CI railway up for both
   services) OR deploy directly: `railway up --service CBB_Betting` (backend) and
@@ -203,6 +205,9 @@ Steps:
    - Waiver Wire: toggling Match Score <-> Overall Value reorders instantly with
      NO loading spinner / network round-trip (V1); signal chips read "Buy low",
      "Injury risk" not BUY_LOW / HIGH_INJURY_RISK (X1)
+   - Weekly Preview: pitching HR category reads "HRA" (distinct color), not a
+     second purple "HR" (W2); Budget page header "Weekly Budget" not a second
+     "Constraint Budget"; dashboard section "Injury Actions Needed" (f14a269)
 4. Report deployment IDs + image shas + smoke results back into HANDOFF.md.
 Do NOT change Railway variables or Yahoo tokens — Track A is already recovered.
 ```
@@ -271,6 +276,21 @@ Claude.
 5. Dedupe the `.env` duplicate YAHOO_ACCESS_TOKEN / YAHOO_REFRESH_TOKEN lines.
 Report changes + verification back into HANDOFF.md.
 ```
+
+**Tier-3 cosmetic batch — COMMITTED f14a269 (2026-07-23):** W2 (HR_P → "HRA" +
+distinct color #ec4899, was identical purple "HR" as batting HR_B); R4 (dead
+`p.status === 'DL'` IL-slot check → normalized `'IL'` in `yahoo-roster-view.tsx`);
+Addendum-4 (dashboard "Injury Alerts" → "Injury Actions Needed" — only flags
+active-slot injuries by design); B2 (Budget page duplicate "Constraint Budget"
+heading → page "Weekly Budget"; "Days in Week" → "Days Left in Week"). tsc +
+build clean. **Still-open Tier-3 (not done):** R7 (relabel "Weekly Adds" + filter
+no-op slot reassignments from allMoves); R4 IL-in-active-slot page banner; B1 FAAB
+row; W1/W4 legend/labels; addendum-2/3 (need_score value next to tier, 2-decimal
+momentum). Each small + in-lane — good follow-up batch.
+
+**S1 UPDATE:** Kimi delivered the rotation-projection spec memo →
+`reports/2026-07-22-streaming-rotation-projection-spec.md` (research-only, left
+uncommitted/untracked pending review). Ready for a Claude implementation session.
 
 **HANDOFF PROMPT — Kimi (S1 probable-pitcher inference research):**
 ```
