@@ -168,35 +168,127 @@ contract. Targeted suites green: 137 passed (`test_mcmc_anchor`,
 `test_scoring_engine`, `test_scoring_engine_rate_floor`, `test_blended_score`,
 `test_waiver_sort_parameter`). `.zcode/` left untracked (tooling scratch).
 
-**HANDOFF PROMPT — Codex (deploy Track C to Railway production):**
+**HANDOFF PROMPT — Codex (deploy Track C + backlog batch to Railway production):**
 ```
 You are Codex, DevOps for the cbb-edge Fantasy Baseball platform. Deploy the
-committed Track C fixes to Railway production.
+committed fixes to Railway production.
 
 Preconditions:
-- Branch stable/cbb-prod is 2 commits ahead of origin: dcb46a9 (earlier roster/
-  war-room fix, already validated) + 8e1ffed (Track C: War Room sim direction,
-  Weekly Preview table, optimizer tooltip). Both are safe to ship.
+- Branch stable/cbb-prod is 4 commits ahead of origin:
+  dcb46a9 (earlier roster/war-room fix, already validated)
+  8e1ffed (Track C: War Room sim direction W3, Weekly Preview table P1, optimizer tooltip)
+  62e1292 (docs: handoff)
+  a7314ba (backlog batch: Schedule Advantage P3, matchup degraded state R2,
+           waiver client-side sort V1, Statcast signal labels X1)
+  All are safe to ship.
 - Deploy path options (deploy.yml auto-deploys on push to stable/cbb-prod):
   either `git push origin stable/cbb-prod` (triggers CI railway up for both
   services) OR deploy directly: `railway up --service CBB_Betting` (backend) and
   `railway up --service observant-benevolence` (frontend) from repo root.
 
 Steps:
-1. Confirm working tree is clean at 8e1ffed: `git log --oneline -1` and
+1. Confirm working tree is clean at a7314ba: `git log --oneline -1` and
    `git status --short` (only .zcode/ should be untracked).
 2. Deploy backend + frontend (push OR railway up, per above).
 3. Smoke checks after SUCCESS:
    - backend GET /health -> 200 healthy
    - GET /api/fantasy/yahoo-health -> 200 status:"healthy"
    - GET /api/fantasy/matchup-preview (authed) -> Category Projections table has
-     rows with UPPERCASE codes + non-empty Me/Opp (P1 fix)
+     rows with UPPERCASE codes + non-empty Me/Opp (P1); no "Schedule Advantage"
+     0/0 card (P3 — card is hidden when schedule_advantage is null)
+   - GET /api/fantasy/matchup (authed) -> response includes "degraded": false on
+     a healthy matchup; the field exists (R2)
    - War Room: a lower-is-better category the team leads (e.g. L, K_B) shows
-     AHEAD/win% > 50%, NOT BEHIND/PUNT (W3 fix)
+     AHEAD/win% > 50%, NOT BEHIND/PUNT (W3)
+   - Waiver Wire: toggling Match Score <-> Overall Value reorders instantly with
+     NO loading spinner / network round-trip (V1); signal chips read "Buy low",
+     "Injury risk" not BUY_LOW / HIGH_INJURY_RISK (X1)
 4. Report deployment IDs + image shas + smoke results back into HANDOFF.md.
 Do NOT change Railway variables or Yahoo tokens — Track A is already recovered.
 ```
 **Deploy path decision: operator chose Codex handoff (Claude does not push/deploy).**
+
+---
+
+## SESSION LOG — 2026-07-23: Claude backlog batch (P3/R2/V1/X1) — COMMITTED a7314ba
+
+Continued from Track C ship. Worked the next four in-lane triage items; each
+verified (py_compile, tsc --noEmit, npm run build, targeted pytest — all green).
+Committed as `a7314ba`.
+
+- **P3 — Schedule Advantage hardcoded 0/0** (`contracts.py`, `fantasy.py`,
+  frontend `preview/page.tsx` + `types.ts`). A real two-sided games-scheduled
+  count needs the opponent roster + MLB game counts; this endpoint sims vs a
+  league-average baseline and never fetches the opponent, so it can't compute
+  one. Made `schedule_advantage` nullable, return None, hide the card. Test:
+  `test_matchup_preview` asserts field is present but may be null.
+- **R2 — matchup TBD/empty stub rendered as false 0-0 tie** (`schemas.py`,
+  `fantasy.py`, frontend `roster/page.tsx` MatchupStrip + `types.ts`). Added
+  `MatchupResponse.degraded`, set True on all three stub paths (Yahoo error / no
+  matchup / team-not-found), loud warning on empty `my_team_key`, and an honest
+  degraded/retry card. Tests: `test_matchup_api` +3 (auth-error, no-data,
+  team-not-found degraded=True; live degraded=False).
+- **V1 — waiver 10s+ refetch on every sort toggle** (frontend `waiver/page.tsx`).
+  Removed `sort` from the react-query key; sort the ~25-50 row array client-side
+  (Overall Value -> z_score, matching backend). Toggling is now instant.
+- **X1 — raw Statcast signal enums** (frontend `types.ts` + `waiver/page.tsx`).
+  Added shared `SIGNAL_LABELS` / `signalLabel()`; BUY_LOW -> "Buy low",
+  HIGH_INJURY_RISK -> "Injury risk", etc., at both waiver render sites.
+
+**Still-open backlog (out of Claude's lane — see delegation bundles below):**
+- **S1** — probable-pitcher inference gap (Streaming shows zero 2-start pitchers
+  everywhere). Largest item; data engineering. Delegation bundle → Kimi (research
+  the rotation-projection approach) then Claude (implement).
+- **§0 infra** — Yahoo token persistence to DB/Railway vars (survives redeploy),
+  403 backoff/circuit-open, fantasy Yahoo-auth alert, set `YAHOO_TEAM_KEY`,
+  dedupe `.env` Yahoo lines. Delegation bundle → Codex.
+- **V4** — waiver Add/claim action. Backend `POST /api/fantasy/waiver/add`
+  exists but no frontend wiring; needs Yahoo Write scope + live testing. Deferred.
+- **Tier-3 cosmetic polish** (not yet done): W2 K/HR label+color collision;
+  R4 IL-in-active-slot banner + dead `'DL'` literal; R7 relabel "Weekly Adds" +
+  filter no-op slot reassignments; B1 FAAB row + B2 duplicate heading; addendum
+  cosmetics (need_score value next to tier, 2-decimal momentum, "Injury Actions
+  Needed" title). Each small + in-lane; can be a follow-up batch.
+
+**HANDOFF PROMPT — Codex (§0 Yahoo infra hardening):**
+```
+You are Codex, DevOps for cbb-edge. Harden the Yahoo integration so a transient
+Yahoo hiccup can't become a full outage again (root-caused in triage §0). Do NOT
+change core Yahoo request logic beyond what's listed; coordinate schema with
+Claude.
+1. Token persistence: rotated refresh tokens currently persist only in container
+   memory — `.env` writes fail silently on Railway
+   (`backend/fantasy_baseball/yahoo_client_resilient.py:~297-314`). Persist the
+   rotated refresh/access tokens to the DB (or write back to Railway vars via
+   API) after each refresh so a redeploy doesn't roll back to a stale token.
+2. 403 backoff: the 403-retry path refreshes on every 403 (~lines 390-399) — add
+   backoff / circuit-open on repeated auth failures to avoid a refresh hammer.
+3. Alerting: add a fantasy-side alert hook that fires on a total Yahoo auth
+   outage (none exists today).
+4. Set `YAHOO_TEAM_KEY` in Railway (currently unset → fragile get_my_team_key()
+   path; this is what makes matchup degrade to TBD — see R2). Value for the
+   active league/team: 469.l.72586.t.7.
+5. Dedupe the `.env` duplicate YAHOO_ACCESS_TOKEN / YAHOO_REFRESH_TOKEN lines.
+Report changes + verification back into HANDOFF.md.
+```
+
+**HANDOFF PROMPT — Kimi (S1 probable-pitcher inference research):**
+```
+You are Kimi, deep-research agent for cbb-edge. Research-only; no production code.
+Problem: the Streaming Station shows "No 2-start pitchers found" across the whole
+near-term window because the probable-pitcher feed collapses after ~today and the
+fallback inference only matches an exact modulo-5 rotation cadence — post-All-Star
+rotation resets make exact matches near-impossible (triage §S1). Feed itself is
+alive (2,584 rows, synced 3x/day) and the DB/job are healthy.
+Deliverable (spec memo to Claude): a concrete rotation-projection approach that
+projects each team's rotation forward across an 8-day window with tolerance
+(e.g. ±1-2 day slack, or sequence-based projection from the last N starts) so
+2-start pitchers can be identified before official probables are announced.
+Cover: data available (probable_pitchers table columns, MLB schedule via
+`_fetch_probable_starts_map`), the current fallback
+(`probable_pitcher_fallback.py:176-196`), edge cases (doubleheaders, off-days,
+IL returns, openers), and a minimum-coverage alert design. Cite file:line.
+```
 
 ---
 
