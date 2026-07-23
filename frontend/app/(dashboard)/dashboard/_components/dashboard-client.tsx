@@ -420,7 +420,10 @@ export function InjuryFlagsWidget() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-text-primary text-sm">
           <AlertCircle className="h-4 w-4 text-accent-gold" />
-          Injury Alerts
+          {/* Only flags injured players in ACTIVE slots (IL-slotted players are
+              intentionally excluded) — title reflects "action needed", not a
+              total injury count (§Addendum-4). */}
+          Injury Actions Needed
           {flags.length > 0 && (
             <Badge variant="volatile" className="ml-auto text-xs">
               {flags.length}
@@ -432,7 +435,7 @@ export function InjuryFlagsWidget() {
         {!dataAvailable ? (
           <p className="text-status-bubble text-sm">Injury data unavailable — Yahoo roster could not be loaded.</p>
         ) : flags.length === 0 ? (
-          <p className="text-text-muted text-sm">No active injury alerts.</p>
+          <p className="text-text-muted text-sm">No injury actions needed — all injured players are on the IL.</p>
         ) : (
           <ul className="space-y-3">
             {flags.map((flag, i) => (

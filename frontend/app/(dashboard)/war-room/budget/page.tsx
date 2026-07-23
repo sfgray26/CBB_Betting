@@ -56,8 +56,10 @@ export default function BudgetPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <DollarSign className="h-3.5 w-3.5 text-accent-gold" />
+          {/* Page-level label; the panel below carries the "Constraint Budget"
+              card title — avoid the duplicate identical heading (§B2). */}
           <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">
-            Constraint Budget
+            Weekly Budget
           </span>
         </div>
         {fetchedAt && (
@@ -98,7 +100,7 @@ export default function BudgetPage() {
             </p>
           </div>
           <div>
-            <p className="text-[10px] text-text-muted uppercase tracking-wide">Days in Week</p>
+            <p className="text-[10px] text-text-muted uppercase tracking-wide">Days Left in Week</p>
             <p className="text-sm font-semibold text-text-primary">
               {budget.days_in_week_remaining != null ? budget.days_in_week_remaining : '—'}
             </p>

@@ -417,7 +417,9 @@ export type RotoCategory = BatterCategory | PitcherCategory
 // Display labels (HR_B -> "HR", K_B -> "K", HR_P -> "HR", K_P -> "K", K_9 -> "K/9")
 export const CATEGORY_LABEL: Record<RotoCategory, string> = {
   R: 'R', H: 'H', HR_B: 'HR', RBI: 'RBI', K_B: 'K', TB: 'TB', AVG: 'AVG', OPS: 'OPS', NSB: 'NSB',
-  W: 'W', L: 'L', HR_P: 'HR', K_P: 'K', ERA: 'ERA', WHIP: 'WHIP', K_9: 'K/9', QS: 'QS', NSV: 'NSV',
+  // HR_P is home runs ALLOWED (pitching, lower-is-better) — label "HRA" so it
+  // isn't confused with batting HR (§W2).
+  W: 'W', L: 'L', HR_P: 'HRA', K_P: 'K', ERA: 'ERA', WHIP: 'WHIP', K_9: 'K/9', QS: 'QS', NSV: 'NSV',
 }
 
 // Design System v2 — persistent category identity colors
@@ -426,8 +428,8 @@ export const CATEGORY_COLOR: Record<RotoCategory, string> = {
   // Batting
   R: '#3b82f6', H: '#06b6d4', HR_B: '#a855f7', RBI: '#8b5cf6',
   K_B: '#f43f5e', TB: '#d946ef', AVG: '#eab308', OPS: '#ca8a04', NSB: '#10b981',
-  // Pitching
-  W: '#3b82f6', L: '#f43f5e', HR_P: '#a855f7', K_P: '#06b6d4',
+  // Pitching  (HR_P distinct from batting HR_B's #a855f7 — §W2)
+  W: '#3b82f6', L: '#f43f5e', HR_P: '#ec4899', K_P: '#06b6d4',
   ERA: '#f97316', WHIP: '#fb923c', K_9: '#22d3ee', QS: '#10b981', NSV: '#84cc16',
 }
 

@@ -325,7 +325,9 @@ export default function YahooRosterView({ players, onMove, isMoving }: YahooRost
       const current = p.current_slot?.toUpperCase()
       if (pos === 'OF' && current?.startsWith('OF')) return true
       if (pos === 'BN' && (current?.startsWith('BN') || !current)) return true
-      if (pos === 'IL' && (current?.startsWith('IL') || p.status === 'DL')) return true
+      // player_mapper normalizes Yahoo "DL" → "IL", so match the normalized
+      // status here (the old 'DL' literal was dead — §R4).
+      if (pos === 'IL' && (current?.startsWith('IL') || p.status === 'IL')) return true
       return current === pos
     })
     if (match) {
