@@ -7977,19 +7977,11 @@ class DailyIngestionOrchestrator:
                         pitcher_name = pstate.pitcher_name
                         mlbam_id = pstate.mlbam_id
                         bdl_id = pstate.bdl_player_id
-                        handedness = None
-                        if bdl_id:
-                            mapping = db.query(PlayerIDMapping).filter(
-                                PlayerIDMapping.bdl_id == bdl_id
-                            ).first()
-                            if mapping and mapping.throws:
-                                handedness = mapping.throws[0].upper()
-                        elif mlbam_id:
-                            mapping = db.query(PlayerIDMapping).filter(
-                                PlayerIDMapping.mlbam_id == mlbam_id
-                            ).first()
-                            if mapping and mapping.throws:
-                                handedness = mapping.throws[0].upper()
+                        # Handedness is display-only for projected rows. PlayerIDMapping
+                        # has NO `throws` column (the old inferred-branch lookup crashed
+                        # the whole sync once projection actually started producing rows);
+                        # official rows still get handedness from the MLB API above.
+                        handedness = pstate.handedness
                         is_confirmed = False
                         source = "projected"
                         inferred_records += 1

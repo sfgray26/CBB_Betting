@@ -22,6 +22,7 @@ from backend.services.rotation_projection import (
     project_probable_starters,
     _actual_starts_by_team_date,
     _starter_team_name,
+    _throws_from_payload,
 )
 
 D0 = date(2026, 7, 1)
@@ -164,6 +165,22 @@ class TestStarterTeamNameExtraction:
         assert _starter_team_name(None) == ("", "")
 
 
+class TestThrowsExtraction:
+    """Handedness for projected rows comes from bats_throws (PlayerIDMapping has
+    no `throws` column — the old lookup crashed the whole sync once projection
+    started producing rows)."""
+
+    def test_parses_bats_throws(self):
+        assert _throws_from_payload({"player": {"bats_throws": "Left/Right"}}) == "R"
+        assert _throws_from_payload({"player": {"bats_throws": "Right/Left"}}) == "L"
+
+    def test_absent_or_malformed_is_none(self):
+        assert _throws_from_payload({"player": {"bats_throws": None}}) is None
+        assert _throws_from_payload({"player": {}}) is None
+        assert _throws_from_payload({}) is None
+        assert _throws_from_payload(None) is None
+
+
 @pytest.fixture
 def rot_db():
     """In-memory SQLite session with the tables the resolver reads. mlb_game_log
@@ -208,7 +225,7 @@ def _game(db, game_id, home_id, away_id):
     ), {"g": game_id, "h": home_id, "a": away_id})
 
 
-def _insert_start(db, bdl_id, name, game_id, game_date, ip="6.2"):
+def _insert_start(db, bdl_id, name, game_id, game_date, ip="6.2", bats_throws=None):
     """Insert an MLBPlayerStats row in the TRUE PRODUCTION shape: NO team anywhere
     in raw_payload (both player.team and top-level team null). Team is derivable
     only via game_id -> mlb_game_log."""
@@ -222,7 +239,8 @@ def _insert_start(db, bdl_id, name, game_id, game_date, ip="6.2"):
         innings_pitched=ip,
         era=3.0,
         raw_payload={
-            "player": {"id": bdl_id, "full_name": name, "position": "P", "team": None},
+            "player": {"id": bdl_id, "full_name": name, "position": "P",
+                       "team": None, "bats_throws": bats_throws},
             "team": None,
             "ip": ip,
         },
@@ -263,6 +281,22 @@ class TestBuildRotationSetsProductionShape:
         assert p.pitcher_name == "Ace Pitcher"
         assert p.mlbam_id == 999
         assert p.cadence == 5
+
+    def test_pitcher_state_carries_handedness(self, rot_db):
+        """PitcherState.handedness is populated from bats_throws so projected sync
+        rows get handedness without the removed PlayerIDMapping.throws lookup."""
+        today = date(2026, 7, 24)
+        db = rot_db
+        self._seed_teams(db)
+        db.add(PlayerIDMapping(bdl_id=42, mlbam_id=999, full_name="Ace Pitcher",
+                               normalized_name="ace pitcher", source="manual"))
+        _game(db, 100, 1, 2)
+        _game(db, 101, 3, 1)
+        _insert_start(db, 42, "Ace Pitcher", 100, today - timedelta(days=7), bats_throws="Left/Left")
+        _insert_start(db, 42, "Ace Pitcher", 101, today - timedelta(days=2), bats_throws="Left/Left")
+        db.commit()
+        p = build_rotation_sets(db, today)["LAD"][0]
+        assert p.handedness == "L"
 
     def test_single_opponent_is_unresolved(self, rot_db):
         """A pitcher whose only games are vs one opponent is ambiguous (both teams
