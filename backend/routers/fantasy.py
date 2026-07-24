@@ -6978,49 +6978,51 @@ async def yahoo_health():
     Returns structured status for frontend diagnostics and proactive UI disabling.
     Frontend can poll this to disable the 'Optimize Lineup' button when Yahoo is unavailable.
     """
-    from backend.fantasy_baseball.yahoo_client_resilient import _client, _client_lock
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
     health_status = {
         "status": "unknown",  # healthy | degraded | down
         "circuit_state": None,  # closed | open | half_open
+        "auth_circuit_state": "closed",
         "last_success_at": None,
         "error": None,
         "recovery_hint": None,
     }
 
-    # Check client singleton status
-    if _client is None:
-        health_status.update({
-            "status": "down",
-            "error": "Yahoo client not initialized",
-            "recovery_hint": "Check YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REFRESH_TOKEN environment variables"
-        })
-        return health_status
-
-    # Check circuit breaker
     try:
-        if hasattr(_client, 'circuit'):
-            cb_stats = _client.circuit.get_stats()
-            health_status["circuit_state"] = cb_stats["state"]
-            if cb_stats["state"] == "open":
-                health_status["status"] = "degraded"
-                health_status["error"] = "Circuit breaker is OPEN after repeated failures"
-                health_status["recovery_hint"] = "Wait 5 minutes for circuit recovery or investigate API failures"
+        client = get_yahoo_client()
+
+        if hasattr(client, "_cb"):
+            health_status["circuit_state"] = getattr(client._cb, "state", None)
+        if getattr(client, "_auth_circuit_open_until", None):
+            auth_error = client._auth_circuit_open_error()
+            if auth_error is not None:
+                health_status.update({
+                    "status": "down",
+                    "auth_circuit_state": "open",
+                    "error": "Yahoo auth circuit is OPEN after repeated failures",
+                    "recovery_hint": (
+                        "Verify Yahoo app authorization and token state; "
+                        "the client is suppressing refresh retries until cooldown."
+                    ),
+                })
+                return health_status
 
         # Try a lightweight API call (get league metadata)
-        _client.get_league()
+        client.get_league()
         health_status["status"] = "healthy"
         health_status["last_success_at"] = datetime.now(ZoneInfo("America/New_York")).isoformat()
 
     except YahooAuthError as exc:
         health_status["status"] = "down"
-        health_status["error"] = f"Authentication failed: {str(exc)}"
+        health_status["error"] = _safe_yahoo_error_message(exc, context="Yahoo auth")
         health_status["recovery_hint"] = "Re-run OAuth flow: python -m backend.fantasy_baseball.yahoo_client_resilient --auth"
+    except YahooAPIError as exc:
+        health_status["status"] = "down" if exc.status_code in (401, 403, 503) else "degraded"
+        health_status["error"] = _safe_yahoo_error_message(exc, context="Yahoo API health")
+        if exc.status_code in (401, 403):
+            health_status["recovery_hint"] = "Verify Yahoo app authorization and token state"
     except Exception as exc:
         health_status["status"] = "degraded"
-        health_status["error"] = f"API check failed: {str(exc)}"
+        health_status["error"] = _safe_yahoo_error_message(exc, context="Yahoo API health")
 
     return health_status
 
@@ -7234,6 +7236,7 @@ async def streaming_recommendations(
         ProbablePitcherSnapshot.is_home,
         ProbablePitcherSnapshot.quality_score,
         ProbablePitcherSnapshot.is_confirmed,
+        ProbablePitcherSnapshot.source,
         ProbablePitcherSnapshot.game_time_et,
     ).filter(
         ProbablePitcherSnapshot.game_date >= target_dt,
@@ -7259,6 +7262,8 @@ async def streaming_recommendations(
             "is_home": r.is_home,
             "quality_score": round(float(r.quality_score or 0), 2),
             "is_confirmed": r.is_confirmed,
+            # NULL source = legacy row → treat as official (matches is_confirmed).
+            "source": r.source or ("official" if r.is_confirmed else "projected"),
             "game_time_et": r.game_time_et,
         })
 
@@ -7269,17 +7274,26 @@ async def streaming_recommendations(
             # Calculate overall quality (average of quality scores)
             avg_quality = sum(s["quality_score"] for s in starts[:2]) / min(len(starts), 2)
 
-            # Determine confidence level
-            confirmed_count = sum(1 for s in starts[:2] if s.get("is_confirmed"))
-            if confirmed_count == 2:
+            # Determine confidence level from provenance. "official" starts are
+            # MLB.com probables; "projected" come from the rotation model.
+            official_count = sum(1 for s in starts[:2] if s.get("source") == "official")
+            projected_count = sum(1 for s in starts[:2] if s.get("source") == "projected")
+            if official_count == 2:
                 confidence = "HIGH"
-            elif confirmed_count == 1:
+            elif official_count == 1:
                 confidence = "MEDIUM"
+            elif projected_count >= 1:
+                # Both starts rotation-projected — real 2-start candidate, just
+                # not yet officially announced. Its own tier (spec §4.5a) instead
+                # of the old LOW→AVOID that hid every projected pitcher.
+                confidence = "PROJECTED"
             else:
                 confidence = "LOW"
 
             # Determine recommendation tier with confidence-weighted matrix
-            if avg_quality >= 1.0 and confidence == "HIGH":
+            if confidence == "PROJECTED":
+                recommendation = "PROJECTED"  # ranks between AVERAGE and GOOD
+            elif avg_quality >= 1.0 and confidence == "HIGH":
                 recommendation = "EXCELLENT"
             elif avg_quality >= 0.3 and confidence in ("HIGH", "MEDIUM"):
                 recommendation = "GOOD"
@@ -7294,13 +7308,15 @@ async def streaming_recommendations(
             factors = []
             factors.append(f"starts_count: {len(starts)}")
             factors.append(f"avg_quality: {avg_quality:.2f}")
-            if confirmed_count > 0:
-                factors.append(f"confirmed_starts: {confirmed_count}")
+            if official_count > 0:
+                factors.append(f"official_starts: {official_count}")
+            if projected_count > 0:
+                factors.append(f"projected_starts: {projected_count}")
 
-            # Build risk note based on confirmation status
-            if confirmed_count == 2:
+            # Build risk note based on provenance
+            if official_count == 2:
                 risk_note = "Both starts confirmed — safe stream"
-            elif confirmed_count == 1:
+            elif official_count == 1:
                 risk_note = "One start projected — monitor for scratches"
             else:
                 risk_note = "Both starts projected — high variance, have backup ready"
@@ -7314,6 +7330,7 @@ async def streaming_recommendations(
                 "overall_quality": round(avg_quality, 2),
                 "recommendation": recommendation,
                 "risk_note": risk_note,
+                "is_projected": confidence == "PROJECTED",
                 "transparency": {
                     "quality_score": round(avg_quality, 2),
                     "factors": factors,
@@ -7346,7 +7363,7 @@ async def streaming_recommendations(
             "staleness_ms": staleness_ms,
             "query_time_et": now_et.isoformat(),
         },
-        "data_sources": ["ProbablePitcherSnapshot", "StatcastPerformances (quality_score)"]
+        "data_sources": ["MLB probable & projected starters", "Park-adjusted ERA quality score"]
     }
 
 

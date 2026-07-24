@@ -50,6 +50,7 @@ class TestStreamingRecommendationsEndpoint:
                 is_home=True,
                 quality_score=1.2,
                 is_confirmed=True,
+                source="official",
                 game_time_et="7:05 PM",
             ),
             MagicMock(
@@ -62,6 +63,7 @@ class TestStreamingRecommendationsEndpoint:
                 is_home=False,
                 quality_score=0.8,
                 is_confirmed=True,
+                source="official",
                 game_time_et="1:05 PM",
             ),
         ]
@@ -126,7 +128,7 @@ class TestStreamingRecommendationsEndpoint:
         # Check freshness
         assert "freshness" in data
         assert data["freshness"]["staleness_ms"] < 100  # Fresh data (<100ms)
-        assert data["data_sources"] == ["ProbablePitcherSnapshot", "StatcastPerformances (quality_score)"]
+        assert data["data_sources"] == ["MLB probable & projected starters", "Park-adjusted ERA quality score"]
 
     def test_streaming_recommendations_handles_edge_cases_gracefully(self, fantasy_client):
         """Endpoint should handle no 2-start pitchers or only 1-start pitchers gracefully."""
@@ -237,6 +239,7 @@ class TestStreamingRecommendationsEndpoint:
                 is_home=True,
                 quality_score=1.2,
                 is_confirmed=True,  # 1 confirmed
+                source="official",
                 game_time_et="7:05 PM",
             ),
             MagicMock(
@@ -249,6 +252,7 @@ class TestStreamingRecommendationsEndpoint:
                 is_home=False,
                 quality_score=0.8,
                 is_confirmed=False,  # 1 projected
+                source="projected",
                 game_time_et="1:05 PM",
             ),
         ]
@@ -260,7 +264,8 @@ class TestStreamingRecommendationsEndpoint:
             expected_risk_note="One start projected — monitor for scratches"
         )
 
-        # Test Case 2: LOW confidence quality pitcher -> AVOID regardless of quality
+        # Test Case 2: both starts rotation-projected -> PROJECTED tier (not the
+        # old LOW->AVOID that hid every projected 2-start pitcher — §4.5).
         mock_rows_low_conf = [
             MagicMock(
                 bdl_player_id=22222,
@@ -272,6 +277,7 @@ class TestStreamingRecommendationsEndpoint:
                 is_home=True,
                 quality_score=1.5,  # High quality
                 is_confirmed=False,  # Both projected
+                source="projected",
                 game_time_et="10:10 PM",
             ),
             MagicMock(
@@ -284,14 +290,15 @@ class TestStreamingRecommendationsEndpoint:
                 is_home=False,
                 quality_score=1.0,
                 is_confirmed=False,
+                source="projected",
                 game_time_et="4:15 PM",
             ),
         ]
         run_test_with_rows(
             mock_rows_low_conf,
             expected_quality=1.25,
-            expected_recommendation="AVOID",
-            expected_confidence="LOW",
+            expected_recommendation="PROJECTED",
+            expected_confidence="PROJECTED",
             expected_risk_note="Both starts projected — high variance, have backup ready"
         )
 
@@ -307,6 +314,7 @@ class TestStreamingRecommendationsEndpoint:
                 is_home=True,
                 quality_score=-1.0,
                 is_confirmed=True,
+                source="official",
                 game_time_et="2:20 PM",
             ),
             MagicMock(
@@ -319,6 +327,7 @@ class TestStreamingRecommendationsEndpoint:
                 is_home=False,
                 quality_score=-0.8,
                 is_confirmed=True,
+                source="official",
                 game_time_et="7:05 PM",
             ),
         ]

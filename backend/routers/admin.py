@@ -2052,6 +2052,101 @@ async def run_migration_v31(user: str = Depends(verify_admin_api_key), db: Sessi
     return results
 
 
+@router.post("/admin/migrate/probable-source")
+async def run_migration_probable_source(user: str = Depends(verify_admin_api_key), db: Session = Depends(get_db)):
+    """Add probable_pitchers.source column (rotation-projection Phase 1).
+
+    Idempotent. Adds a nullable VARCHAR(20) `source` ('official' | 'projected')
+    and backfills existing rows to 'official' (all pre-existing rows came from the
+    MLB.com probable / exact-cadence fallback path). MUST run before deploying the
+    projection ingestion code, which INSERTs the `source` column.
+    """
+    from sqlalchemy import text
+
+    results = {"steps": []}
+    try:
+        exists = db.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'probable_pitchers' AND column_name = 'source'
+        """)).fetchone()
+        if exists and exists[0]:
+            results["steps"].append({"source_column": "already exists"})
+        else:
+            db.execute(text("ALTER TABLE probable_pitchers ADD COLUMN source VARCHAR(20)"))
+            db.commit()
+            results["steps"].append({"source_column": "created"})
+    except Exception as e:
+        db.rollback()
+        results["steps"].append({"source_column": f"error: {e}"})
+
+    try:
+        res = db.execute(text(
+            "UPDATE probable_pitchers SET source = 'official' WHERE source IS NULL"
+        ))
+        db.commit()
+        results["steps"].append({"backfill_official": f"updated {res.rowcount} rows"})
+    except Exception as e:
+        db.rollback()
+        results["steps"].append({"backfill_official": f"error: {e}"})
+
+    verify = db.execute(text("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'probable_pitchers' AND column_name = 'source'
+    """)).fetchone()
+    results["verification"] = {"source": "EXISTS" if verify else "MISSING"}
+    return results
+
+
+@router.post("/admin/migrate/probable-doubleheader")
+async def run_migration_probable_doubleheader(user: str = Depends(verify_admin_api_key), db: Session = Depends(get_db)):
+    """Relax probable_pitchers uniqueness to support doubleheaders (Phase 3).
+
+    Swaps the old UNIQUE (game_date, team) for a null-safe functional unique index
+    UNIQUE (game_date, team, COALESCE(mlbam_id, -1)). This lets two official
+    doubleheader starters (distinct mlbam) both persist, while projected/NULL-mlbam
+    rows still dedupe to one per team/date.
+
+    Idempotent. MUST run before deploying the projection ingestion (whose upsert
+    targets this index). Existing rows are one-per-(date,team) under the old
+    constraint, so no de-dup is needed before creating the new index.
+    """
+    from sqlalchemy import text
+
+    results = {"steps": []}
+
+    # 1. Create the null-safe functional unique index.
+    try:
+        db.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_pp_date_team_mlbam "
+            "ON probable_pitchers (game_date, team, COALESCE(mlbam_id, -1))"
+        ))
+        db.commit()
+        results["steps"].append({"uq_pp_date_team_mlbam": "created_or_exists"})
+    except Exception as e:
+        db.rollback()
+        results["steps"].append({"uq_pp_date_team_mlbam": f"error: {e}"})
+
+    # 2. Drop the old (game_date, team) uniqueness (constraint and/or index form).
+    for drop_sql, label in [
+        ("ALTER TABLE probable_pitchers DROP CONSTRAINT IF EXISTS _pp_date_team_uc", "drop_constraint__pp_date_team_uc"),
+        ("DROP INDEX IF EXISTS _pp_date_team_uc", "drop_index__pp_date_team_uc"),
+    ]:
+        try:
+            db.execute(text(drop_sql))
+            db.commit()
+            results["steps"].append({label: "ok"})
+        except Exception as e:
+            db.rollback()
+            results["steps"].append({label: f"error: {e}"})
+
+    verify = db.execute(text("""
+        SELECT indexname FROM pg_indexes
+        WHERE tablename = 'probable_pitchers' AND indexname = 'uq_pp_date_team_mlbam'
+    """)).fetchone()
+    results["verification"] = {"uq_pp_date_team_mlbam": "EXISTS" if verify else "MISSING"}
+    return results
+
+
 @router.post("/admin/migrate/v32")
 async def run_migration_v32(user: str = Depends(verify_admin_api_key), db: Session = Depends(get_db)):
     """

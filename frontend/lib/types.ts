@@ -442,18 +442,21 @@ export const LOWER_IS_BETTER: RotoCategory[] = ['K_B', 'L', 'HR_P', 'ERA', 'WHIP
 // user-facing labels so internal codes never reach the UI verbatim.
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** Streaming recommendation tiers (EXCELLENT/GOOD/AVERAGE/AVOID) → labels. */
+/** Streaming recommendation tiers → labels. PROJECTED = both starts rotation-
+ * projected (not yet officially announced); ranks between GOOD and AVERAGE. */
 export const TIER_LABELS: Record<string, string> = {
   EXCELLENT: 'Excellent',
   GOOD: 'Good',
+  PROJECTED: 'Projected',
   AVERAGE: 'Average',
   AVOID: 'Avoid',
 }
 
-/** Streaming data-confidence levels (HIGH/MEDIUM/LOW) → labels. */
+/** Streaming data-confidence levels → labels. */
 export const CONFIDENCE_LABELS: Record<string, string> = {
   HIGH: 'High',
   MEDIUM: 'Medium',
+  PROJECTED: 'Projected',
   LOW: 'Low',
 }
 
@@ -1072,6 +1075,7 @@ export interface StreamingStart {
   is_home: boolean
   quality_score: number
   is_confirmed: boolean
+  source?: 'official' | 'projected'
   game_time_et: string
 }
 
@@ -1082,12 +1086,13 @@ export interface StreamingPitcher {
   handedness: string
   starts: StreamingStart[]
   overall_quality: number
-  recommendation: 'EXCELLENT' | 'GOOD' | 'AVERAGE' | 'AVOID'
+  recommendation: 'EXCELLENT' | 'GOOD' | 'PROJECTED' | 'AVERAGE' | 'AVOID'
   risk_note: string
+  is_projected?: boolean
   transparency: {
     quality_score: number
     factors: string[]
-    confidence: 'HIGH' | 'MEDIUM' | 'LOW'
+    confidence: 'HIGH' | 'MEDIUM' | 'PROJECTED' | 'LOW'
   }
 }
 

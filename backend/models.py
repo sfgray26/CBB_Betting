@@ -448,6 +448,26 @@ class DBAlert(Base):
     acknowledged_at = Column(DateTime)
 
 
+class YahooOAuthToken(Base):
+    """Durable Yahoo OAuth token pair for Fantasy API refresh-token rotation."""
+
+    __tablename__ = "yahoo_oauth_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String(50), nullable=False, default="yahoo_fantasy")
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=False)
+    token_type = Column(String(32))
+    expires_at = Column(DateTime)
+    last_refresh_at = Column(DateTime, default=_now_et)
+    created_at = Column(DateTime, default=_now_et)
+    updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
+
+    __table_args__ = (
+        UniqueConstraint("provider", name="uq_yahoo_oauth_tokens_provider"),
+    )
+
+
 class FantasyDraftSession(Base):
     """Tracks a single fantasy draft session state."""
 
@@ -1908,6 +1928,10 @@ class ProbablePitcherSnapshot(Base):
     mlbam_id = Column(Integer, nullable=True)  # MLBAM ID for cross-reference
     handedness = Column(String(1), nullable=True)  # "L" or "R"
     is_confirmed = Column(Boolean, nullable=False, default=False)
+    # Provenance: "official" (MLB.com probable) | "projected" (rotation model).
+    # Kept distinct from is_confirmed, whose semantics were already conflated
+    # (any MLB.com probable was stored True). NULL = legacy row (treat official).
+    source = Column(String(20), nullable=True)
 
     game_time_et = Column(String(10), nullable=True)  # "7:05 PM" format
     park_factor = Column(Float, nullable=True)  # Park factor for matchup quality
@@ -1918,7 +1942,12 @@ class ProbablePitcherSnapshot(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now_et, onupdate=_now_et)
 
     __table_args__ = (
-        UniqueConstraint("game_date", "team", name="_pp_date_team_uc"),
+        # Uniqueness includes mlbam_id so doubleheaders (two starters, same team +
+        # date) can both persist. Production uses a null-safe functional index
+        # UNIQUE (game_date, team, COALESCE(mlbam_id, -1)) created by
+        # /admin/migrate/probable-doubleheader; this plain 3-col constraint is the
+        # equivalent intent for fresh/test databases (create_all).
+        UniqueConstraint("game_date", "team", "mlbam_id", name="_pp_date_team_mlbam_uc"),
         Index("idx_pp_date", "game_date"),
         Index("idx_pp_pitcher", "bdl_player_id"),
     )

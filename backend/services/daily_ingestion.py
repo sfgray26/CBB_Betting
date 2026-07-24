@@ -73,6 +73,7 @@ from backend.services.probable_pitcher_fallback import (
     build_recent_starter_candidates,
     infer_probable_pitcher_for_team,
 )
+from backend.services.rotation_projection import project_probable_starters
 from backend.services.snapshot_engine import SnapshotInput, build_snapshot
 from backend.services.backtesting_harness import (
     BacktestInput,
@@ -1522,6 +1523,55 @@ class DailyIngestionOrchestrator:
         except Exception:
             pass
         return None
+
+    def _emit_probable_coverage(
+        self,
+        today: "date",
+        expected: dict,
+        actual: dict,
+    ) -> dict:
+        """Compute per-date probable-pitcher coverage and alert on threshold breaches.
+
+        Coverage = upserted rows / (2 * scheduled games) per date. Thresholds tighten
+        as official probables publish (spec §6):
+          D0-1 < 90% -> critical | D2-3 < 70% -> warning | D4-7 < 50% -> warning
+        Returns {date_iso: {expected, actual, coverage}} for telemetry. Never raises.
+        """
+        result: dict = {}
+        for offset in range(8):
+            d = today + timedelta(days=offset)
+            exp = int(expected.get(d, 0))
+            act = int(actual.get(d, 0))
+            cov = round(act / exp, 3) if exp else None
+            result[d.isoformat()] = {"expected": exp, "actual": act, "coverage": cov}
+            if not exp or cov is None:
+                continue
+            if offset <= 1:
+                threshold, severity = 0.90, "critical"
+            elif offset <= 3:
+                threshold, severity = 0.70, "warning"
+            else:
+                threshold, severity = 0.50, "warning"
+            if cov < threshold:
+                msg = (
+                    f"probable_pitchers coverage {d.isoformat()}: {act}/{exp} "
+                    f"({cov * 100:.0f}%) below {threshold * 100:.0f}% [{severity}] "
+                    f"— inference pipeline degraded"
+                )
+                if severity == "critical":
+                    logger.error("SYNC COVERAGE ALERT: %s", msg)
+                else:
+                    logger.warning("SYNC COVERAGE ALERT: %s", msg)
+                try:
+                    from backend.services.discord_notifier import send_to_channel
+                    send_to_channel(
+                        "data-alerts",
+                        message=f"⚠️ {msg}",
+                        mention_admin=(severity == "critical"),
+                    )
+                except Exception:
+                    pass  # best-effort; logging above is the reliable signal
+        return result
 
     def _record_job_run(self, job_id: str, status: str, records: int = 0, elapsed_ms: Optional[int] = None) -> None:
         """Update in-memory job status after a run."""
@@ -7771,11 +7821,10 @@ class DailyIngestionOrchestrator:
                     mlbam_to_bdl[m.mlbam_id] = m.bdl_id
                 logger.info("_sync_probable_pitchers: Loaded %d MLBAM->BDL mappings", len(mlbam_to_bdl))
 
-                recent_starter_candidates = build_recent_starter_candidates(db, today)
-                logger.info(
-                    "_sync_probable_pitchers: Built fallback starter candidates for %d teams",
-                    len(recent_starter_candidates),
-                )
+                # Rotation projection (replaces the exact-modulo-5 fallback) is
+                # built after the schedule is collected — see Pass 2 below.
+                coverage_expected: dict[date, int] = {}
+                coverage_actual: dict[date, int] = {}
 
                 # Build rolling ERA lookup: mlbam_id -> avg ERA over last 10 starts
                 # NOTE: innings_pitched is stored as String(10) (e.g. "6.2") -- do NOT
@@ -7814,9 +7863,14 @@ class DailyIngestionOrchestrator:
                 except Exception as exc:
                     logger.warning("_sync_probable_pitchers: ERA lookup failed (%s) -- quality_score will be 0.5", exc)
 
-                # Fetch schedule for next 8 days (0-7) to match query's days_ahead=7 parameter
-                # Query: end_dt = target_dt + timedelta(days=days_ahead) includes both endpoints
-                # So days_ahead=7 means we need data for target_dt through target_dt+7 (8 days total)
+                # ── Pass 1: collect all game-sides + team schedule across the window ──
+                # Fetch schedule for next 8 days (0-7). We collect first (rather than
+                # upsert inline) so the rotation projection can walk each team's full
+                # window of game dates and surface 2-start pitchers.
+                collected: list[dict] = []                    # one entry per team-side
+                team_dates: dict[str, set] = {}               # team -> {game dates}
+                official_by_team_date: dict[tuple, object] = {}  # (team, date) -> mlbam id
+
                 for days_ahead in range(8):
                     target_date = today + timedelta(days=days_ahead)
                     date_str = target_date.strftime("%Y-%m-%d")
@@ -7872,111 +7926,158 @@ class DailyIngestionOrchestrator:
                                 if not team_abbr:
                                     continue
 
-                                pitcher_data = side_data.get("probablePitcher", {})
-                                inferred_candidate = None
-                                if pitcher_data:
-                                    pitcher_name = pitcher_data.get("fullName", "")
-                                    mlbam_id = pitcher_data.get("id")
-                                    # Extract handedness from MLB Stats API response
-                                    # Pitcher data includes "pitchHand" with "code": "L" or "R"
-                                    pitch_hand = pitcher_data.get("pitchHand", {})
-                                    handedness = pitch_hand.get("code") if isinstance(pitch_hand, dict) else None
-                                    bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
-                                    official_records += 1
-                                else:
-                                    inferred_candidate = infer_probable_pitcher_for_team(
-                                        recent_starter_candidates,
-                                        team_abbr,
-                                        target_date,
-                                    )
-                                    if inferred_candidate is None:
-                                        continue
-                                    pitcher_name = inferred_candidate.pitcher_name
-                                    mlbam_id = inferred_candidate.mlbam_id
-                                    bdl_id = inferred_candidate.bdl_player_id
-                                    # Try to get handedness from player_id_mapping for inferred pitchers
-                                    handedness = None
-                                    if bdl_id:
-                                        mapping = db.query(PlayerIDMapping).filter(
-                                            PlayerIDMapping.bdl_id == bdl_id
-                                        ).first()
-                                        if mapping and mapping.throws:
-                                            handedness = mapping.throws[0].upper()
-                                    elif mlbam_id:
-                                        mapping = db.query(PlayerIDMapping).filter(
-                                            PlayerIDMapping.mlbam_id == mlbam_id
-                                        ).first()
-                                        if mapping and mapping.throws:
-                                            handedness = mapping.throws[0].upper()
-                                    inferred_records += 1
+                                pitcher_data = side_data.get("probablePitcher", {}) or None
+                                collected.append({
+                                    "target_date": target_date,
+                                    "team_abbr": team_abbr,
+                                    "opp_abbr": opp_abbr,
+                                    "is_home": is_home,
+                                    "game_time_et": game_time_et_str,
+                                    "pitcher_data": pitcher_data,
+                                })
+                                team_dates.setdefault(team_abbr, set()).add(target_date)
+                                coverage_expected[target_date] = coverage_expected.get(target_date, 0) + 1
+                                if pitcher_data and pitcher_data.get("id"):
+                                    official_by_team_date[(team_abbr, target_date)] = pitcher_data.get("id")
 
-                                # Resolve BDL ID via MLBAM mapping when only official MLBAM is known
-                                if bdl_id is None and mlbam_id:
-                                    bdl_id = mlbam_to_bdl.get(mlbam_id)
+                # ── Build projection for the non-official slots ──
+                try:
+                    projected = project_probable_starters(
+                        db,
+                        today,
+                        {t: sorted(ds) for t, ds in team_dates.items()},
+                        official_by_team_date,
+                    )
+                    logger.info(
+                        "_sync_probable_pitchers: projected %d team-date starter slots across %d teams",
+                        len(projected), len(team_dates),
+                    )
+                except Exception as exc:
+                    logger.error("_sync_probable_pitchers: rotation projection failed (%s)", exc, exc_info=True)
+                    projected = {}
 
-                                # Park factor: home team's park
-                                home_abbr = team_abbr if is_home else opp_abbr
-                                pf = get_park_factor(home_abbr, "era")
+                # ── Pass 2: upsert (official first, else projected) ──
+                for rec in collected:
+                    target_date = rec["target_date"]
+                    team_abbr = rec["team_abbr"]
+                    opp_abbr = rec["opp_abbr"]
+                    is_home = rec["is_home"]
+                    pitcher_data = rec["pitcher_data"]
+                    date_str = target_date.strftime("%Y-%m-%d")
 
-                                # quality_score: heuristic from ERA vs league average + park factor.
-                                # Output range [-2.0, +2.0] to match MatchupRatingSchema contract
-                                # and two_start_detector thresholds (EXCELLENT ≥1.0, AVOID <0.0).
-                                # Internally compute raw ∈ [0,1], then scale: (raw-0.5)*4.0.
-                                pitcher_era = mlbam_to_era.get(mlbam_id) if mlbam_id else None
-                                if pitcher_era is None:
-                                    quality_score = 0.0  # neutral: (0.5-0.5)*4 = 0.0
-                                else:
-                                    era_score = max(-0.5, min(0.5, (4.50 - pitcher_era) / 3.00))
-                                    park_val = pf if pf else 1.0
-                                    park_score = max(-0.25, min(0.25, (1.0 - park_val) * 0.25))
-                                    raw_qs = max(0.0, min(1.0, 0.5 + era_score + park_score))
-                                    quality_score = round((raw_qs - 0.5) * 4.0, 2)
+                    if pitcher_data:
+                        pitcher_name = pitcher_data.get("fullName", "")
+                        mlbam_id = pitcher_data.get("id")
+                        pitch_hand = pitcher_data.get("pitchHand", {})
+                        handedness = pitch_hand.get("code") if isinstance(pitch_hand, dict) else None
+                        bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
+                        is_confirmed = bool(pitcher_name)
+                        source = "official"
+                        official_records += 1
+                    else:
+                        pstate = projected.get((team_abbr, target_date))
+                        if pstate is None:
+                            continue  # no official probable and no confident projection
+                        pitcher_name = pstate.pitcher_name
+                        mlbam_id = pstate.mlbam_id
+                        bdl_id = pstate.bdl_player_id
+                        handedness = None
+                        if bdl_id:
+                            mapping = db.query(PlayerIDMapping).filter(
+                                PlayerIDMapping.bdl_id == bdl_id
+                            ).first()
+                            if mapping and mapping.throws:
+                                handedness = mapping.throws[0].upper()
+                        elif mlbam_id:
+                            mapping = db.query(PlayerIDMapping).filter(
+                                PlayerIDMapping.mlbam_id == mlbam_id
+                            ).first()
+                            if mapping and mapping.throws:
+                                handedness = mapping.throws[0].upper()
+                        is_confirmed = False
+                        source = "projected"
+                        inferred_records += 1
 
-                                try:
-                                    stmt = pg_insert(ProbablePitcherSnapshot).values(
-                                        game_date=target_date,
-                                        team=team_abbr,
-                                        opponent=opp_abbr,
-                                        is_home=is_home,
-                                        pitcher_name=pitcher_name,
-                                        bdl_player_id=bdl_id,
-                                        mlbam_id=mlbam_id,
-                                        handedness=handedness,  # "L" or "R"
-                                        is_confirmed=bool(pitcher_data and pitcher_data.get("fullName")),
-                                        game_time_et=game_time_et_str,
-                                        park_factor=pf,
-                                        quality_score=quality_score,
-                                        fetched_at=now_et(),
-                                        updated_at=now_et(),
-                                    )
-                                    stmt = stmt.on_conflict_do_update(
-                                        # Use index_elements (more robust than constraint= which
-                                        # requires the exact named constraint to exist in production).
-                                        # Works as long as a unique index on (game_date, team) exists,
-                                        # which is ensured by _ensure_probable_pitchers_index() at startup.
-                                        index_elements=["game_date", "team"],
-                                        set_={
-                                            "opponent": stmt.excluded.opponent,
-                                            "is_home": stmt.excluded.is_home,
-                                            "pitcher_name": stmt.excluded.pitcher_name,
-                                            "bdl_player_id": stmt.excluded.bdl_player_id,
-                                            "mlbam_id": stmt.excluded.mlbam_id,
-                                            "handedness": stmt.excluded.handedness,  # Update handedness on conflict
-                                            "is_confirmed": stmt.excluded.is_confirmed,
-                                            "game_time_et": stmt.excluded.game_time_et,
-                                            "park_factor": stmt.excluded.park_factor,
-                                            "quality_score": stmt.excluded.quality_score,
-                                            "updated_at": stmt.excluded.updated_at,
-                                        },
-                                    )
-                                    db.execute(stmt)
-                                    records_processed += 1
-                                except Exception as exc:
-                                    logger.error(
-                                        "_sync_probable_pitchers: Failed to upsert %s %s (%s)",
-                                        team_abbr, date_str, exc,
-                                    )
-                                    continue
+                    # Resolve BDL ID via MLBAM mapping when only official MLBAM is known
+                    if bdl_id is None and mlbam_id:
+                        bdl_id = mlbam_to_bdl.get(mlbam_id)
+
+                    # Park factor: home team's park
+                    home_abbr = team_abbr if is_home else opp_abbr
+                    pf = get_park_factor(home_abbr, "era")
+
+                    # quality_score: heuristic from ERA vs league average + park factor.
+                    # Output range [-2.0, +2.0]. Internally raw ∈ [0,1], scaled (raw-0.5)*4.0.
+                    pitcher_era = mlbam_to_era.get(mlbam_id) if mlbam_id else None
+                    if pitcher_era is None:
+                        quality_score = 0.0  # neutral: (0.5-0.5)*4 = 0.0
+                    else:
+                        era_score = max(-0.5, min(0.5, (4.50 - pitcher_era) / 3.00))
+                        park_val = pf if pf else 1.0
+                        park_score = max(-0.25, min(0.25, (1.0 - park_val) * 0.25))
+                        raw_qs = max(0.0, min(1.0, 0.5 + era_score + park_score))
+                        quality_score = round((raw_qs - 0.5) * 4.0, 2)
+
+                    try:
+                        stmt = pg_insert(ProbablePitcherSnapshot).values(
+                            game_date=target_date,
+                            team=team_abbr,
+                            opponent=opp_abbr,
+                            is_home=is_home,
+                            pitcher_name=pitcher_name,
+                            bdl_player_id=bdl_id,
+                            mlbam_id=mlbam_id,
+                            handedness=handedness,  # "L" or "R"
+                            is_confirmed=is_confirmed,
+                            source=source,
+                            game_time_et=rec["game_time_et"],
+                            park_factor=pf,
+                            quality_score=quality_score,
+                            fetched_at=now_et(),
+                            updated_at=now_et(),
+                        )
+                        stmt = stmt.on_conflict_do_update(
+                            # Null-safe unique index (game_date, team, COALESCE(mlbam_id, -1))
+                            # created by /admin/migrate/probable-doubleheader. Lets two
+                            # official doubleheader starters (distinct mlbam) both persist,
+                            # while projected/NULL-mlbam rows still dedupe to one per team/date.
+                            # NOTE: requires the migration to have run in prod first.
+                            index_elements=[
+                                ProbablePitcherSnapshot.game_date,
+                                ProbablePitcherSnapshot.team,
+                                func.coalesce(ProbablePitcherSnapshot.mlbam_id, -1),
+                            ],
+                            set_={
+                                "opponent": stmt.excluded.opponent,
+                                "is_home": stmt.excluded.is_home,
+                                "pitcher_name": stmt.excluded.pitcher_name,
+                                "bdl_player_id": stmt.excluded.bdl_player_id,
+                                "mlbam_id": stmt.excluded.mlbam_id,
+                                "handedness": stmt.excluded.handedness,
+                                "is_confirmed": stmt.excluded.is_confirmed,
+                                "source": stmt.excluded.source,
+                                "game_time_et": stmt.excluded.game_time_et,
+                                "park_factor": stmt.excluded.park_factor,
+                                "quality_score": stmt.excluded.quality_score,
+                                "updated_at": stmt.excluded.updated_at,
+                            },
+                        )
+                        db.execute(stmt)
+                        records_processed += 1
+                        coverage_actual[target_date] = coverage_actual.get(target_date, 0) + 1
+                    except Exception as exc:
+                        logger.error(
+                            "_sync_probable_pitchers: Failed to upsert %s %s (%s)",
+                            team_abbr, date_str, exc,
+                        )
+                        continue
+
+                # ── Coverage accounting + threshold alerting ──
+                # Converts today's silent structural emptiness into a monitorable
+                # signal (spec §6). Thresholds tighten as official probables publish.
+                coverage_by_date = self._emit_probable_coverage(
+                    today, coverage_expected, coverage_actual
+                )
 
                 db.commit()
                 elapsed = int((time.monotonic() - t0) * 1000)
@@ -7990,7 +8091,9 @@ class DailyIngestionOrchestrator:
                     "records": records_processed,
                     "official_records": official_records,
                     "inferred_records": inferred_records,
+                    "projected_records": inferred_records,
                     "api_errors": api_errors,
+                    "coverage_by_date": coverage_by_date,
                     "elapsed_ms": elapsed,
                 }
 

@@ -9,17 +9,19 @@ import { Loader2, AlertCircle, ChevronDown, ChevronUp, Filter, Play, Sparkles } 
 import { FreshnessBadge } from '@/components/freshness/freshness-badge'
 import { ActionModal } from './action-modal'
 
-type RecommendationTier = 'EXCELLENT' | 'GOOD' | 'AVERAGE' | 'AVOID' | 'ALL'
+type RecommendationTier = 'EXCELLENT' | 'GOOD' | 'PROJECTED' | 'AVERAGE' | 'AVOID' | 'ALL'
 
 const TIER_COLORS: Record<RecommendationTier, string> = {
   EXCELLENT: 'bg-status-safe/15 text-status-safe border-status-safe/30',
   GOOD: 'bg-blue-400/15 text-blue-400 border-blue-400/30',
+  // Rotation-projected 2-start pitchers — not yet officially announced.
+  PROJECTED: 'bg-purple-400/15 text-purple-400 border-purple-400/30',
   AVERAGE: 'bg-status-bubble/15 text-status-bubble border-status-bubble/30',
   AVOID: 'bg-status-lost/15 text-status-lost border-status-lost/30',
   ALL: 'bg-bg-surface text-text-secondary border-border-subtle',
 }
 
-const TIER_ORDER: RecommendationTier[] = ['EXCELLENT', 'GOOD', 'AVERAGE', 'AVOID']
+const TIER_ORDER: RecommendationTier[] = ['EXCELLENT', 'GOOD', 'PROJECTED', 'AVERAGE', 'AVOID']
 
 export function StreamingRecommendations({ targetDate }: { targetDate: string }) {
   const [tierFilter, setTierFilter] = useState<RecommendationTier>('ALL')

@@ -913,24 +913,27 @@ async def backfill_quality_scores(user: str = Depends(verify_admin_api_key)):
     """
     db = SessionLocal()
     try:
-        # Step 1: ensure the unique constraint exists so future upserts work
+        # Step 1: ensure the null-safe unique index exists so future upserts work.
+        # (Doubleheader-aware — matches the ON CONFLICT target in _sync_probable_pitchers.
+        # Do NOT re-add the old (game_date, team) constraint here; it would block
+        # doubleheaders and conflict with the projection upsert.)
         constraint_created = False
         try:
-            db.execute(text("""
-                ALTER TABLE probable_pitchers
-                ADD CONSTRAINT _pp_date_team_uc UNIQUE (game_date, team)
-            """))
+            db.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_pp_date_team_mlbam "
+                "ON probable_pitchers (game_date, team, COALESCE(mlbam_id, -1))"
+            ))
             db.commit()
             constraint_created = True
         except Exception:
             db.rollback()
-            # Constraint already exists — expected on a healthy DB
+            # Index already exists — expected on a healthy DB
 
-        # Step 2: verify constraint presence
+        # Step 2: verify index presence
         constraint_exists = db.execute(text("""
-            SELECT 1 FROM information_schema.table_constraints
-            WHERE constraint_name = '_pp_date_team_uc'
-              AND table_name = 'probable_pitchers'
+            SELECT 1 FROM pg_indexes
+            WHERE indexname = 'uq_pp_date_team_mlbam'
+              AND tablename = 'probable_pitchers'
         """)).fetchone() is not None
 
         # Step 3: set quality_score = 0.0 (neutral) where NULL
