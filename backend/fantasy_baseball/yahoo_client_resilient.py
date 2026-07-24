@@ -63,6 +63,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _token_lock = threading.Lock()
+_ET = ZoneInfo("America/New_York")
 
 # ---------------------------------------------------------------------------
 # In-memory TTL cache for Yahoo API responses (fix 30s timeouts)
@@ -157,6 +158,9 @@ YAHOO_AUTH_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 YAHOO_TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
 YAHOO_API_BASE = "https://fantasysports.yahooapis.com/fantasy/v2"
 YAHOO_SPORT = "469"  # 2026 MLB season game ID
+YAHOO_AUTH_FAILURE_WINDOW_SECONDS = int(os.getenv("YAHOO_AUTH_FAILURE_WINDOW_SECONDS", "300"))
+YAHOO_AUTH_FAILURE_THRESHOLD = int(os.getenv("YAHOO_AUTH_FAILURE_THRESHOLD", "3"))
+YAHOO_AUTH_CIRCUIT_OPEN_SECONDS = int(os.getenv("YAHOO_AUTH_CIRCUIT_OPEN_SECONDS", "900"))
 
 ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 
@@ -204,11 +208,16 @@ class YahooFantasyClient:
         self._session = requests.Session()
         self._cb = _CoreCircuitBreaker(failure_threshold=3, recovery_timeout=60, window_seconds=300)
         self._cache = YahooAPICache(default_ttl_seconds=300)  # 5-minute default TTL
+        self._auth_failure_count = 0
+        self._auth_failure_window_started_at: Optional[float] = None
+        self._auth_circuit_open_until: Optional[float] = None
+        self._auth_outage_alert_sent_for_open_until: Optional[float] = None
+        self._load_persisted_tokens()
 
         # Log credential status (masked)
-        client_id_status = f"{self.client_id[:10]}..." if len(self.client_id) > 10 else "NOT_SET"
-        client_secret_status = f"{self.client_secret[:5]}..." if len(self.client_secret) > 5 else "NOT_SET"
-        refresh_token_status = f"{self._refresh_token[:10]}..." if len(self._refresh_token) > 10 else "NOT_SET"
+        client_id_status = "SET" if self.client_id else "NOT_SET"
+        client_secret_status = "SET" if self.client_secret else "NOT_SET"
+        refresh_token_status = "SET" if self._refresh_token else "NOT_SET"
 
         logger.info("API CLIENT INIT: YahooFantasyClient - client_id=%s, client_secret=%s, refresh_token=%s",
                    client_id_status, client_secret_status, refresh_token_status)
@@ -268,6 +277,36 @@ class YahooFantasyClient:
         self._store_tokens(tokens)
         return tokens
 
+    def _load_persisted_tokens(self) -> None:
+        """Prefer DB-persisted rotated Yahoo tokens over stale env tokens."""
+        try:
+            from backend.services.yahoo_token_store import load_yahoo_tokens
+
+            stored = load_yahoo_tokens()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Yahoo persisted token load failed: %s", exc)
+            return
+
+        if not stored:
+            return
+
+        refresh_token = stored.get("refresh_token")
+        access_token = stored.get("access_token")
+        expires_at = stored.get("expires_at")
+        if refresh_token:
+            self._refresh_token = refresh_token
+        if access_token:
+            self._access_token = access_token
+        if expires_at:
+            try:
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=_ET)
+                self._token_expiry = expires_at.timestamp()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Yahoo persisted token expiry ignored: %s", exc)
+                self._token_expiry = 0.0
+        logger.info("Yahoo OAuth tokens loaded from database")
+
     def _refresh_access_token(self) -> None:
         """Use refresh token to get a new access token."""
         if not self._refresh_token:
@@ -295,23 +334,39 @@ class YahooFantasyClient:
         self._store_tokens(tokens)
 
     def _store_tokens(self, tokens: dict) -> None:
-        """Persist tokens to .env and update in-memory state.
-
-        On Railway (no writable .env), the write fails silently —
-        tokens are still live in-memory for the process lifetime.
-        Set YAHOO_REFRESH_TOKEN in Railway env vars directly after
-        completing the one-time auth flow locally.
-        """
+        """Persist tokens durably and update in-memory state."""
         self._access_token = tokens["access_token"]
         self._refresh_token = tokens.get("refresh_token", self._refresh_token)
         self._token_expiry = time.time() + tokens.get("expires_in", 3600) - 60
-        # Write back to .env — best-effort; fails silently on Railway
+        expires_at = datetime.fromtimestamp(self._token_expiry, _ET)
+
+        try:
+            from backend.services.yahoo_token_store import persist_yahoo_tokens
+
+            persisted = persist_yahoo_tokens(
+                access_token=self._access_token,
+                refresh_token=self._refresh_token,
+                expires_at=expires_at,
+                token_type=tokens.get("token_type"),
+            )
+            if not persisted:
+                logger.error(
+                    "Yahoo tokens refreshed but DB persistence failed; "
+                    "redeploy may fall back to stale environment tokens"
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Yahoo tokens refreshed but durable persistence raised: %s",
+                exc,
+            )
+
+        # Write back to .env as local-dev convenience; DB is the production store.
         try:
             set_key(str(ENV_PATH), "YAHOO_ACCESS_TOKEN", self._access_token)
             set_key(str(ENV_PATH), "YAHOO_REFRESH_TOKEN", self._refresh_token)
             logger.info("Yahoo tokens refreshed and persisted to .env")
         except Exception as exc:
-            logger.info("Yahoo tokens refreshed (in-memory only — .env not writable: %s)", exc)
+            logger.info("Yahoo .env token persistence skipped: %s", exc)
 
     def _ensure_token(self) -> None:
         """Thread-safe token refresh with double-check locking."""
@@ -323,6 +378,79 @@ class YahooFantasyClient:
             if time.time() < self._token_expiry and self._access_token:
                 return
             self._refresh_access_token()
+
+    def _auth_circuit_open_error(self) -> Optional[YahooAPIError]:
+        """Return an error when repeated Yahoo auth failures have opened the circuit."""
+        if self._auth_circuit_open_until is None:
+            return None
+        now = time.time()
+        if now < self._auth_circuit_open_until:
+            remaining = int(self._auth_circuit_open_until - now)
+            return YahooAPIError(
+                f"Yahoo auth circuit is OPEN after repeated 403 failures; retry in {remaining}s",
+                503,
+            )
+        self._auth_circuit_open_until = None
+        self._auth_outage_alert_sent_for_open_until = None
+        return None
+
+    def _can_attempt_403_recovery_refresh(self) -> bool:
+        """Allow exactly one 403 recovery refresh per auth-failure window."""
+        if self._auth_circuit_open_error() is not None:
+            return False
+        now = time.time()
+        if (
+            self._auth_failure_window_started_at is not None
+            and now - self._auth_failure_window_started_at > YAHOO_AUTH_FAILURE_WINDOW_SECONDS
+        ):
+            self._auth_failure_count = 0
+            self._auth_failure_window_started_at = None
+        return self._auth_failure_count == 0
+
+    def _record_yahoo_auth_success(self) -> None:
+        self._auth_failure_count = 0
+        self._auth_failure_window_started_at = None
+        self._auth_circuit_open_until = None
+        self._auth_outage_alert_sent_for_open_until = None
+
+    def _record_yahoo_auth_failure(self, status_code: int = 403) -> None:
+        now = time.time()
+        if (
+            self._auth_failure_window_started_at is None
+            or now - self._auth_failure_window_started_at > YAHOO_AUTH_FAILURE_WINDOW_SECONDS
+        ):
+            self._auth_failure_window_started_at = now
+            self._auth_failure_count = 0
+
+        self._auth_failure_count += 1
+        if self._auth_failure_count < YAHOO_AUTH_FAILURE_THRESHOLD:
+            return
+
+        self._auth_circuit_open_until = now + YAHOO_AUTH_CIRCUIT_OPEN_SECONDS
+        logger.error(
+            "Yahoo auth circuit opened after %d failures in %ds",
+            self._auth_failure_count,
+            YAHOO_AUTH_FAILURE_WINDOW_SECONDS,
+        )
+        self._emit_yahoo_auth_outage_alert(status_code=status_code)
+
+    def _emit_yahoo_auth_outage_alert(self, status_code: int = 403) -> None:
+        if self._auth_circuit_open_until is None:
+            return
+        if self._auth_outage_alert_sent_for_open_until == self._auth_circuit_open_until:
+            return
+        self._auth_outage_alert_sent_for_open_until = self._auth_circuit_open_until
+        try:
+            from backend.services.fantasy_alerts import report_yahoo_auth_outage
+
+            report_yahoo_auth_outage(
+                failure_count=self._auth_failure_count,
+                threshold=YAHOO_AUTH_FAILURE_THRESHOLD,
+                circuit_open_until=datetime.fromtimestamp(self._auth_circuit_open_until, _ET),
+                status_code=status_code,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Yahoo auth outage alert hook failed: %s", exc)
 
     # ------------------------------------------------------------------
     # HTTP helpers
@@ -364,7 +492,16 @@ class YahooFantasyClient:
         if not self._cb.should_allow_request():
             raise YahooAPIError("Yahoo API circuit breaker is OPEN — service temporarily unavailable", 503)
 
-        self._ensure_token()
+        auth_circuit_error = self._auth_circuit_open_error()
+        if auth_circuit_error is not None:
+            raise auth_circuit_error
+
+        try:
+            self._ensure_token()
+        except YahooAuthError:
+            self._record_yahoo_auth_failure(status_code=401)
+            raise
+
         url = f"{YAHOO_API_BASE}/{path.lstrip('/')}"
         default_params = {"format": "json"}
         if params:
@@ -387,28 +524,44 @@ class YahooFantasyClient:
                 )
                 if resp.status_code == 401:
                     # Token may have just expired mid-request
-                    self._refresh_access_token()
+                    try:
+                        self._refresh_access_token()
+                    except YahooAuthError:
+                        self._record_yahoo_auth_failure(status_code=401)
+                        raise
                     continue
                 if resp.status_code == 403 and not _refreshed_this_call:
                     # Yahoo returns 403 (not 401) for some expired/revoked-token
-                    # states. Attempt ONE refresh — if the app grant is truly
-                    # revoked the refresh will raise YahooAuthError (correct), but
-                    # if it's a transient token issue this self-heals instead of
-                    # cascading into a hard 403 on every endpoint.
-                    logger.warning("Yahoo returned 403 — attempting one token refresh")
-                    self._refresh_access_token()
-                    _refreshed_this_call = True
-                    continue
+                    # states. Attempt one recovery refresh per failure window,
+                    # then fail fast until the auth circuit cools down.
+                    if self._can_attempt_403_recovery_refresh():
+                        logger.warning("Yahoo returned 403 — attempting one token refresh")
+                        try:
+                            self._refresh_access_token()
+                        except YahooAuthError:
+                            self._record_yahoo_auth_failure(status_code=403)
+                            raise
+                        _refreshed_this_call = True
+                        continue
+                    logger.warning("Yahoo returned 403 — auth recovery refresh suppressed by backoff")
+                    self._record_yahoo_auth_failure(status_code=403)
+                    raise YahooAPIError(
+                        "Yahoo API auth failed with HTTP 403; recovery refresh is in backoff",
+                        403,
+                    )
                 if resp.status_code in (429, 999):
                     wait = 2 ** attempt
                     logger.warning(f"Yahoo rate limit ({resp.status_code}), waiting {wait}s")
                     time.sleep(wait)
                     continue
                 if resp.status_code != 200:
+                    if resp.status_code == 403:
+                        self._record_yahoo_auth_failure(status_code=403)
                     raise YahooAPIError(
                         f"Yahoo API error {resp.status_code}: {resp.text[:300]}",
                         resp.status_code,
                     )
+                self._record_yahoo_auth_success()
                 self._cb.record_success()
                 data = resp.json()
 

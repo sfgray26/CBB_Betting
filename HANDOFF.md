@@ -5,6 +5,70 @@
 
 ---
 
+## SESSION LOG — 2026-07-24: Yahoo §0 Backend Hardening — IMPLEMENTED (UNCOMMITTED)
+
+Backend-owned Yahoo hardening completed without touching Railway variables,
+local `.env`, frontend, or Codex's `YAHOO_TEAM_KEY` work.
+
+- **Durable token rotation:** `YahooFantasyClient` now loads a persisted Yahoo
+  OAuth token pair from DB on init and persists every refreshed access/refresh
+  pair to a DB-backed token store before the local-dev `.env` best-effort write.
+  Token values are never logged; init logs now report only `SET`/`NOT_SET`.
+- **403 backoff/circuit:** Repeated 403/401 auth failures now open a bounded
+  Yahoo auth circuit instead of refreshing on every request forever. One recovery
+  refresh is still allowed for a fresh transient 403.
+- **Outage alerting:** When the auth circuit opens, a fantasy-side alert hook
+  persists a `YAHOO_AUTH_OUTAGE` dashboard alert and best-effort sends a Discord
+  `data-alerts` message through existing `DISCORD_*` configuration.
+- **Health endpoint observation:** Production reported `YAHOO_TEAM_KEY` and
+  `YahooFantasyClient().get_my_team_key()` healthy while public
+  `/api/fantasy/yahoo-health` returned stale `Yahoo client not initialized`.
+  Current repo health logic initializes through canonical `get_yahoo_client()`;
+  a regression test now locks that behavior.
+- **Schema/migration:** ORM model `YahooOAuthToken` is present in `backend/models.py`;
+  new idempotent migration `scripts/migration_yahoo_oauth_tokens.py` creates
+  `yahoo_oauth_tokens` with one row per provider and seeds/upserts that row from
+  existing `YAHOO_ACCESS_TOKEN` + `YAHOO_REFRESH_TOKEN` env vars when both are
+  present. The seed uses a conservative 30-minute `expires_at` and prints no
+  token values.
+
+Verification:
+```
+python -m py_compile backend\fantasy_baseball\yahoo_client_resilient.py backend\routers\fantasy.py backend\models.py backend\services\yahoo_token_store.py backend\services\fantasy_alerts.py scripts\migration_yahoo_oauth_tokens.py
+# PASS
+
+python -m py_compile tests\test_yahoo_auth_hardening.py
+# PASS
+
+$env:UV_CACHE_DIR='C:\Users\sfgra\repos\Fixed\cbb-edge\.uv-cache-codex-yahoo'; uv run --with pytest --with pytest-asyncio --with httpx --with sqlalchemy --with requests --with python-dotenv --with fastapi --with tzdata --with psycopg2-binary --with redis --with numpy pytest tests\test_yahoo_auth_hardening.py tests\test_yahoo_client_roster_resilience.py -q
+# 23 passed in 8.26s
+```
+
+Codex DevOps completion — 2026-07-24 10:08 EDT:
+- Set Railway production `YAHOO_TEAM_KEY=469.l.72586.t.7` on `Fantasy-App`;
+  variable-triggered deployment `130fbfb3-2ae5-41b7-b53f-cdd64d66c0aa`
+  completed `SUCCESS` (`sha256:146050394964a12516767dfeab36c2cc465e045af1588c7f74f99d01b09fcf91`).
+  Runtime verification printed `team_key_env_ok True`.
+- Deduped local `.env` Yahoo token entries: exactly one `YAHOO_ACCESS_TOKEN`
+  line and one `YAHOO_REFRESH_TOKEN` line remain. Token values were not printed
+  in this handoff.
+- Deployed backend hardening to Railway production. Final backend deployment
+  `0ffa35ee-4aab-42de-b4a2-ddd0d2cab521` completed `SUCCESS`
+  (`sha256:fe32fb55ccf26e1f896f258256ece5ba25bc9e0ef6d5c5be3800c39062b278d9`).
+  Earlier intermediate deploy `ab24e5c3-7758-4170-91d7-5f5f4a1e3d0a`
+  was superseded/removed by the final image.
+- Ran `scripts/migration_yahoo_oauth_tokens.py` inside the production
+  `Fantasy-App` container after the final deploy. Output:
+  `Migration complete: yahoo_oauth_tokens table ready; env token row upserted`.
+- Production smoke checks after migration:
+  - `/health` -> 200 `healthy`
+  - `/api/fantasy/yahoo-health` -> 200 `status:"healthy"`,
+    `circuit_state:"closed"`, `auth_circuit_state:"closed"`
+  - Bounded logs show `Yahoo OAuth tokens loaded from database` and
+    `Yahoo OAuth tokens persisted to database`; no token values exposed.
+
+---
+
 ## SESSION LOG — 2026-07-22: SEV-1 Yahoo 403 Cascade — RECOVERED, Code Fixes Deployed (UNCOMMITTED)
 
 **Incident:** Every Yahoo Fantasy API call returning `403: "This application is
