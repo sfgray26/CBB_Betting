@@ -69,10 +69,6 @@ from backend.models import (
     engine,
 )
 from backend.services.explainability_layer import ExplanationInput, explain_batch
-from backend.services.probable_pitcher_fallback import (
-    build_recent_starter_candidates,
-    infer_probable_pitcher_for_team,
-)
 from backend.services.rotation_projection import project_probable_starters
 from backend.services.snapshot_engine import SnapshotInput, build_snapshot
 from backend.services.backtesting_harness import (

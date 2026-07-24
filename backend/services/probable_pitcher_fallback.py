@@ -45,6 +45,26 @@ def normalize_team_abbr(abbr: Optional[str]) -> str:
     return TEAM_ALIASES.get(team, team)
 
 
+def starter_team_name(payload: object) -> tuple[str, str]:
+    """Extract (team_abbr, pitcher_name) from an MLBPlayerStats raw_payload.
+
+    CRITICAL: the BDL /mlb/v1/stats row nests the team under the player object
+    (`player.team`); the top-level `team` field is usually null (see
+    data_contracts/mlb_player_stats.py). Reading only the top-level `team` skipped
+    every starter row in production, leaving rotation sets / lineup inference /
+    the backtest empty. Prefer nested player.team, fall back to top-level team.
+    """
+    if not isinstance(payload, dict):
+        return "", ""
+    player_payload = payload.get("player") if isinstance(payload.get("player"), dict) else {}
+    team_payload = player_payload.get("team")
+    if not isinstance(team_payload, dict):
+        team_payload = payload.get("team") if isinstance(payload.get("team"), dict) else {}
+    team = normalize_team_abbr(team_payload.get("abbreviation")) if team_payload else ""
+    name = player_payload.get("full_name") or player_payload.get("name") or ""
+    return team, name
+
+
 def parse_innings_pitched(ip: Optional[object]) -> Optional[float]:
     """Convert BDL innings-pitched notation into decimal innings."""
     if ip is None:
@@ -127,22 +147,14 @@ def build_recent_starter_candidates(
         if ip_decimal is None or ip_decimal < min_starter_ip:
             continue
 
-        payload = row.raw_payload if isinstance(row.raw_payload, dict) else {}
-        team_payload = payload.get("team") if isinstance(payload.get("team"), dict) else {}
-        player_payload = payload.get("player") if isinstance(payload.get("player"), dict) else {}
-
-        team = normalize_team_abbr(team_payload.get("abbreviation"))
+        team, pitcher_name = starter_team_name(row.raw_payload)
         if not team:
             continue
 
         bdl_player_id = row.bdl_player_id
         mapping = id_map.get(bdl_player_id, {})
-        pitcher_name = (
-            player_payload.get("full_name")
-            or player_payload.get("name")
-            or mapping.get("full_name")
-            or ""
-        )
+        if not pitcher_name:
+            pitcher_name = mapping.get("full_name") or ""
         if not pitcher_name:
             continue
 

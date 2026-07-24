@@ -30,8 +30,8 @@ from sqlalchemy.orm import Session
 
 from backend.models import MLBPlayerStats, PlayerIDMapping
 from backend.services.probable_pitcher_fallback import (
-    normalize_team_abbr,
     parse_innings_pitched,
+    starter_team_name as _starter_team_name,
 )
 
 DEFAULT_CADENCE = 6
@@ -188,20 +188,13 @@ def build_rotation_sets(
         ip = parse_innings_pitched(row.innings_pitched)
         if ip is None or ip < min_starter_ip:
             continue
-        payload = row.raw_payload if isinstance(row.raw_payload, dict) else {}
-        team_payload = payload.get("team") if isinstance(payload.get("team"), dict) else {}
-        player_payload = payload.get("player") if isinstance(payload.get("player"), dict) else {}
-        team = normalize_team_abbr(team_payload.get("abbreviation"))
+        team, name = _starter_team_name(row.raw_payload)
         if not team:
             continue
         bdl_id = row.bdl_player_id
         mapping = id_map.get(bdl_id, {})
-        name = (
-            player_payload.get("full_name")
-            or player_payload.get("name")
-            or mapping.get("full_name")
-            or ""
-        )
+        if not name:
+            name = mapping.get("full_name") or ""
         if not name:
             continue
         key = (team, bdl_id)
@@ -299,11 +292,7 @@ def _actual_starts_by_team_date(
         ip = parse_innings_pitched(row.innings_pitched)
         if ip is None or ip < min_starter_ip:
             continue
-        payload = row.raw_payload if isinstance(row.raw_payload, dict) else {}
-        team_payload = payload.get("team") if isinstance(payload.get("team"), dict) else {}
-        player_payload = payload.get("player") if isinstance(payload.get("player"), dict) else {}
-        team = normalize_team_abbr(team_payload.get("abbreviation"))
-        name = player_payload.get("full_name") or player_payload.get("name") or ""
+        team, name = _starter_team_name(row.raw_payload)
         if not team or not name:
             continue
         out.setdefault((team, row.game_date), set()).add(name.strip().lower())

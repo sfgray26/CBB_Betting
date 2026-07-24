@@ -908,8 +908,9 @@ async def backfill_quality_scores(user: str = Depends(verify_admin_api_key)):
     NULL. The 0.0 fill is a safe neutral value (same as the code-level default when
     no ERA data is available).
 
-    After running this endpoint, trigger /admin/sync/probable-pitchers to backfill
-    ERA-based quality scores for pitchers where MLBAM data is available.
+    After running this endpoint, trigger POST /admin/sync/probable-pitchers to
+    backfill ERA-based quality scores for pitchers where MLBAM data is available.
+    (That canonical endpoint wraps the probable_pitchers_morning sync job.)
     """
     db = SessionLocal()
     try:
@@ -3678,6 +3679,50 @@ async def ingestion_run_job(
     except Exception as exc:
         logger.error("Manual job trigger failed for %s: %s", job_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/sync/probable-pitchers")
+async def sync_probable_pitchers(user: str = Depends(verify_admin_api_key)):
+    """Canonical trigger for the probable-pitchers sync (official probables +
+    rotation-projected rows + coverage accounting).
+
+    Wraps run_job("probable_pitchers_morning") so operators don't have to know the
+    scheduler variant name. The result dict includes `records`, `official_records`,
+    `projected_records`, and `coverage_by_date` — check projected_records > 0 to
+    confirm the rotation projection is producing rows.
+    """
+    if _ingestion_orchestrator is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DailyIngestionOrchestrator is disabled (ENABLE_INGESTION_ORCHESTRATOR=false)",
+        )
+    try:
+        result = await _ingestion_orchestrator.run_job("probable_pitchers_morning")
+        return {"job_id": "probable_pitchers", "result": result}
+    except Exception as exc:
+        logger.error("Manual probable-pitchers sync failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/diagnostics/rotation-backtest")
+async def rotation_backtest(days: int = 30, user: str = Depends(verify_admin_api_key)):
+    """Backtest the rotation projection against production MLBPlayerStats.
+
+    Replays the last `days` days and reports exact/within-1-day hit rates by
+    horizon offset. This is the validation gate for enabling projected tiers:
+    `passes_gate` is true only when d2_d5_exact_hit_rate >= 0.70 AND
+    d2_d5_within1_hit_rate >= 0.85. A `d2_d5_total` of 0 means no evaluable
+    sample (e.g. starter-history extraction is returning nothing).
+    """
+    from backend.services.rotation_projection import backtest_rotation_projection
+    db = SessionLocal()
+    try:
+        return backtest_rotation_projection(db, days=days)
+    except Exception as exc:
+        logger.error("rotation-backtest failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        db.close()
 
 
 @app.post("/admin/ingestion/run-pipeline")
