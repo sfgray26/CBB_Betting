@@ -132,6 +132,49 @@ OPS FIXES: added canonical `POST /admin/sync/probable-pitchers` (wraps the
 `GET /admin/diagnostics/rotation-backtest?days=30` so the backtest no longer needs
 a hand-written inline script.
 
+Codex re-validation — 2026-07-24 11:35 EDT:
+- Local focused gate before deploy:
+  `py_compile backend/main.py backend/services/rotation_projection.py backend/services/probable_pitcher_fallback.py tests/test_rotation_projection.py`
+  passed; `git diff --check` passed; Python 3.11 requirements-backed pytest
+  `tests/test_rotation_projection.py tests/test_probable_pitcher_fallback.py`
+  passed (`21 passed`). A broader API subset still has pre-existing local test
+  harness issues around stale `backend.schedulers.fantasy_scheduler` patches and
+  optional deps; not used as the deploy gate for this fix.
+- Backend redeployed to Railway production service `Fantasy-App`.
+  Deployment `754a9cc0-5482-4587-af2d-210dfbbb3892` reached `SUCCESS`
+  with message `deploy S1 starter team extraction fix`.
+- Canonical sync endpoint now works, but the production gate still failed:
+  `/admin/sync/probable-pitchers` -> `status:"success"`, `records:87`,
+  `official_records:87`, `inferred_records:0`, `projected_records:0`,
+  `api_errors:0`; coverage unchanged after 2026-07-27 (`0.208`, then `0.0`).
+- New in-container backtest endpoint also still fails:
+  `/admin/diagnostics/rotation-backtest?days=30` ->
+  `anchor_date:"2026-07-23"`, `d2_d5_total:0`,
+  `d2_d5_exact_hit_rate:0.0`, `d2_d5_within1_hit_rate:0.0`,
+  `passes_gate:false`.
+- Streaming smoke remains official-only:
+  `/api/fantasy/streaming/recommendations?target_date=2026-07-24&days_ahead=7`
+  -> `TwoStartCount=2`, `ProjectedCount=0`, `EXCELLENT:1`, `GOOD:1`.
+- Requested production row samples:
+  - `probable_pitchers` 2026-07-24..2026-07-31 source counts:
+    `official=90`, `rows_with_mlbam=90`, no projected rows.
+  - Representative probable rows: 2026-07-24 `ARI Eduardo Rodriguez`
+    `mlbam_id=593958 source=official`; `ATH Jacob Lopez` `682052 official`;
+    `ATL Grant Holmes` `656550 official`; `BOS Patrick Sandoval`
+    `663776 official`; `CHC Matthew Boyd` `571510 official`.
+  - `mlb_player_stats` starter-history window 2026-06-08..<2026-07-24:
+    `ip_not_null_rows=4785`, `numeric_ip_rows=4785`,
+    `raw_payload_rows=4785`, but `nested_team_rows=0` and `top_team_rows=0`.
+  - Representative `mlb_player_stats` rows: 2026-07-23 Taj Bradley
+    `bdl_player_id=878`, `innings_pitched=7.0`, `player.team=null`,
+    `top-level team=null`; Gavin Williams `bdl_player_id=879`, `IP=7.0`,
+    both team fields null; Chris Sale `bdl_player_id=736`, `IP=6.0`,
+    both team fields null.
+- Decision: **frontend deploy remains blocked**. The extraction fix is deployed,
+  but production data does not contain team abbreviations in either expected
+  payload location. Claude's next fix likely needs a production-safe team
+  derivation path from `game_id`/schedule/team stats or ingestion repair/backfill.
+
 **⚠️ HANDOFF PROMPT — Codex (S1 re-validate + conditional frontend deploy):**
 ```
 You are Codex, DevOps for cbb-edge. Redeploy S1 backend with the extraction fix
