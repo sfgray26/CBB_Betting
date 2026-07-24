@@ -110,6 +110,55 @@ Codex S1 production validation — 2026-07-24 11:05 EDT:
   PROJECTED tier chip or trust projected tiers until Claude explains/fixes the
   production data gap and the backtest gate passes.
 
+**Claude root-cause + fix — 2026-07-24 (COMMITTED e3413af):**
+ROOT CAUSE (confirmed via the contract + players fixture + a model_dump probe):
+`MLBPlayerStats.raw_payload` nests the team under `player.team` (the BDL
+/mlb/v1/stats shape); the top-level `team` field is **null**. `build_rotation_sets`
+and the backtest's `_actual_starts_by_team_date` read only top-level
+`raw_payload["team"]["abbreviation"]` → None → every starter row skipped → empty
+rotation sets → **zero projected rows AND d2_d5_total:0** (no evaluable sample).
+Official sync was unaffected (it reads the MLB schedule API, not this table),
+which is why records:87/official:87 but projected:0. The SAME bug lived in
+`probable_pitcher_fallback.build_recent_starter_candidates`, still live via
+`infer_probable_pitcher_map` in `daily_lineup_optimizer.py:1336` — so the lineup
+optimizer's probable inference was silently broken too.
+FIX: single `starter_team_name(payload)` extractor (prefers nested player.team,
+falls back to top-level) wired into all three call sites. 7 new regression tests
+reproduce the failure against a real SQLite DB with the production raw_payload
+shape (build_rotation_sets returned {} before, populated after). 55 backend tests
+pass; app imports clean.
+OPS FIXES: added canonical `POST /admin/sync/probable-pitchers` (wraps the
+`probable_pitchers_morning` job; the old 404 path now works) and
+`GET /admin/diagnostics/rotation-backtest?days=30` so the backtest no longer needs
+a hand-written inline script.
+
+**⚠️ HANDOFF PROMPT — Codex (S1 re-validate + conditional frontend deploy):**
+```
+You are Codex, DevOps for cbb-edge. Redeploy S1 backend with the extraction fix
+(commit e3413af) and re-run the validation gate. The Phase-1/3 migrations already
+ran successfully on 2026-07-24 (source col EXISTS + backfilled 2666; DH index
+EXISTS; old constraint dropped) — do NOT re-run them.
+
+1. Deploy backend at e3413af (railway up --service CBB_Betting OR push).
+2. Trigger the sync via the NOW-CANONICAL endpoint (the old 404 is fixed):
+   POST /admin/sync/probable-pitchers
+   PASS CRITERIA: result.projected_records > 0 (was 0). Also check
+   result.coverage_by_date improves for 2026-07-27+ (was 0.208 / 0.0).
+3. Run the backtest via the new endpoint (no more inline script / railway ssh
+   needed — it runs in-container behind the admin key):
+   GET /admin/diagnostics/rotation-backtest?days=30
+   PASS CRITERIA: d2_d5_total > 0, d2_d5_exact_hit_rate >= 0.70,
+   d2_d5_within1_hit_rate >= 0.85, passes_gate == true.
+4. Streaming smoke:
+   GET /api/fantasy/streaming/recommendations?target_date=<today>&days_ahead=7
+   → ProjectedCount > 0 with some recommendation:"PROJECTED".
+5. ONLY IF steps 2-4 all pass: deploy the frontend (PROJECTED tier chip).
+   If backtest still fails or projected_records==0, STOP and report the numbers +
+   a sample of probable_pitchers rows (source, mlbam_id) + a sample MLBPlayerStats
+   raw_payload back to Claude — do not deploy the frontend.
+Report deploy IDs + sync result + backtest JSON into HANDOFF.md.
+```
+
 ---
 
 ## SESSION LOG — 2026-07-22: SEV-1 Yahoo 403 Cascade — RECOVERED, Code Fixes Deployed (UNCOMMITTED)
