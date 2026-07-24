@@ -202,6 +202,53 @@ EXISTS; old constraint dropped) — do NOT re-run them.
 Report deploy IDs + sync result + backtest JSON into HANDOFF.md.
 ```
 
+**Claude SECOND-pass root cause + fix — 2026-07-24 (COMMITTED 6628e09):**
+Codex revalidated `e3413af`: still `projected_records:0`, `d2_d5_total:0`. New prod
+evidence was decisive — `mlb_player_stats` starter window has 4785 rows but
+`nested_team_rows=0` AND `top_team_rows=0`: the team is **absent from raw_payload
+entirely** (BDL /mlb/v1/stats omits it; it's `model_dump()` of a contract whose
+team fields are null). So no payload-based extractor could ever work. Reps: Taj
+Bradley (878), Gavin Williams (879), Chris Sale (736) — all team fields null.
+FIX: derive team from **game membership**. New shared
+`resolve_pitcher_teams(db, bdl_ids)` maps pitcher → team via
+`MLBPlayerStats.game_id → mlb_game_log.{home,away}_team_id → mlb_team.abbreviation`,
+using the modal team across a pitcher's games (their team is in every game;
+opponents vary → unique mode with ≥2 distinct opponents). Ambiguous (single
+opponent / mid-window trade) → left unresolved, not guessed. Wired through
+`build_rotation_sets`, `_actual_starts_by_team_date`, and
+`build_recent_starter_candidates` (still live in the lineup optimizer). Resolver
+is exception-safe. 20 rotation tests use the TRUE prod shape (team null everywhere)
+against a real SQLite DB with mlb_game_log/mlb_team seeded — including a backtest
+test asserting `d2_d5_total > 0` (the exact production symptom). 44 backend tests
+pass; app + lineup-optimizer imports clean.
+
+**⚠️ HANDOFF PROMPT — Codex (S1 re-validate #2 + conditional frontend deploy):**
+```
+You are Codex, DevOps for cbb-edge. Redeploy S1 backend with the game-membership
+team derivation (commit 6628e09) and re-run the gate. Migrations already ran
+(source col + DH index) — do NOT re-run them.
+1. Deploy backend at 6628e09.
+2. POST /admin/sync/probable-pitchers
+   PASS: result.projected_records > 0 (was 0); coverage_by_date improves for
+   2026-07-27+ (was 0.208 / 0.0).
+3. GET /admin/diagnostics/rotation-backtest?days=30
+   PASS: d2_d5_total > 0 (was 0), and ideally passes_gate == true
+   (d2_d5_exact >= 0.70 AND within1 >= 0.85).
+4. GET /api/fantasy/streaming/recommendations?target_date=<today>&days_ahead=7
+   PASS: ProjectedCount > 0 with some recommendation:"PROJECTED".
+5. IF projected_records > 0 AND d2_d5_total > 0 AND passes_gate AND
+   ProjectedCount > 0: deploy the frontend PROJECTED tier chip.
+   IF d2_d5_total > 0 but passes_gate is false (projection produces rows but
+   accuracy is below target): STOP the frontend, report the full backtest JSON
+   (by_offset) back to Claude to tune tolerance/cadence — do NOT deploy frontend.
+   IF projected_records is STILL 0: report a sample of mlb_game_log coverage —
+   run `SELECT COUNT(*) FROM mlb_player_stats s LEFT JOIN mlb_game_log g ON
+   s.game_id=g.game_id WHERE g.game_id IS NULL AND s.innings_pitched IS NOT NULL`
+   (orphan starter rows with no game_log = the resolver's blind spot) and send it
+   to Claude.
+Report deploy IDs + sync result + backtest JSON into HANDOFF.md.
+```
+
 ---
 
 ## SESSION LOG — 2026-07-22: SEV-1 Yahoo 403 Cascade — RECOVERED, Code Fixes Deployed (UNCOMMITTED)
