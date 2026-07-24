@@ -289,8 +289,55 @@ row; W1/W4 legend/labels; addendum-2/3 (need_score value next to tier, 2-decimal
 momentum). Each small + in-lane — good follow-up batch.
 
 **S1 UPDATE:** Kimi delivered the rotation-projection spec memo →
-`reports/2026-07-22-streaming-rotation-projection-spec.md` (research-only, left
-uncommitted/untracked pending review). Ready for a Claude implementation session.
+`reports/2026-07-22-streaming-rotation-projection-spec.md`. Claude implemented all
+3 phases — COMMITTED `eb0f887` (branch now 8 commits ahead of origin).
+
+**S1 DONE — 2026-07-24 (COMMITTED eb0f887):** Per-pitcher rotation projection
+replaces the exact-modulo-5 fallback (~31% hit) that left Streaming empty.
+- Gate: `backend/services/rotation_projection.py` (pure core + backtest harness),
+  `tests/test_rotation_projection.py` (11 tests: 2-start surfacing, tolerance,
+  official reconciliation, cadence).
+- Phase 1: `_sync_probable_pitchers` collect→project→upsert; adds
+  `probable_pitchers.source`; per-date coverage alerting (logs + Discord data-alerts).
+- Phase 2: streaming route PROJECTED tier + UI chip; footer copy fixed (§S2).
+- Phase 3: null-safe DH unique index (game_date, team, COALESCE(mlbam_id,-1)).
+- Verified: 43 backend tests + 11 rotation tests; tsc + build clean; app imports clean.
+- NOT locally verifiable: the functional-index ON CONFLICT (SQLite can't exercise
+  pg_insert) and the ingestion job against real data → Codex must validate.
+
+**⚠️ HANDOFF PROMPT — Codex (S1 deploy — MIGRATIONS FIRST):**
+```
+You are Codex, DevOps for cbb-edge. Deploy the S1 rotation-projection work
+(commit eb0f887). ORDERING IS CRITICAL — the ingestion upsert INSERTs a new
+`source` column and its ON CONFLICT targets a new functional unique index. If the
+ingestion code runs before the migrations, _sync_probable_pitchers errors (caught;
+it rolls back, no corruption, self-heals next sync — but no data lands).
+
+Steps:
+1. Deploy backend at eb0f887 (railway up --service CBB_Betting OR push).
+2. IMMEDIATELY run BOTH migrations (admin API key required), before the next
+   scheduled probable-pitchers sync (08:30/16:00/20:00 ET):
+   POST /admin/migrate/probable-source        (adds source col, backfills 'official')
+   POST /admin/migrate/probable-doubleheader  (null-safe DH unique index; drops old
+                                               (game_date,team) constraint/index)
+   Confirm each returns verification EXISTS.
+3. Trigger a manual sync: POST /admin/sync/probable-pitchers (or wait for next).
+   Check logs: "projected N team-date starter slots"; return payload has
+   projected_records > 0 and coverage_by_date populated.
+4. VALIDATE the algorithm on real data before trusting projected rows — run:
+   railway run python -c "from backend.models import SessionLocal; \
+     from backend.services.rotation_projection import backtest_rotation_projection; \
+     import json; db=SessionLocal(); print(json.dumps(backtest_rotation_projection(db, days=30), indent=2)); db.close()"
+   Target (spec §7): d2_d5_exact_hit_rate >= 0.70, d2_d5_within1_hit_rate >= 0.85,
+   passes_gate == true. If below target, DO NOT trust projected tiers yet — report
+   the numbers back to Claude to tune tolerance/cadence.
+5. Deploy frontend (PROJECTED tier chip).
+6. Smoke: GET /api/fantasy/streaming/recommendations?target_date=<today>&days_ahead=7
+   → two_start_pitchers non-empty with some recommendation:"PROJECTED", is_projected:true.
+Report deploy IDs + migration results + backtest numbers into HANDOFF.md.
+Note: an OLD migration endpoint /admin/migrate/v28 and run_migration_v28 re-add the
+legacy _pp_date_team_uc constraint — do NOT run them post-S1.
+```
 
 **HANDOFF PROMPT — Kimi (S1 probable-pitcher inference research):**
 ```
