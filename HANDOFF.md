@@ -5,7 +5,7 @@
 
 ---
 
-## SESSION LOG — 2026-07-24: Yahoo §0 Backend Hardening — IMPLEMENTED (UNCOMMITTED)
+## SESSION LOG — 2026-07-24: Yahoo §0 Backend Hardening — IMPLEMENTED (COMMITTED e1edb4d)
 
 Backend-owned Yahoo hardening completed without touching Railway variables,
 local `.env`, frontend, or Codex's `YAHOO_TEAM_KEY` work.
@@ -66,6 +66,49 @@ Codex DevOps completion — 2026-07-24 10:08 EDT:
     `circuit_state:"closed"`, `auth_circuit_state:"closed"`
   - Bounded logs show `Yahoo OAuth tokens loaded from database` and
     `Yahoo OAuth tokens persisted to database`; no token values exposed.
+
+Codex commit audit — 2026-07-24 10:45 EDT:
+- Committed the deployed Yahoo hardening batch as `e1edb4d`
+  (`fix: harden Yahoo auth token persistence`) so future S1 deploys do not roll
+  production back to the pre-hardening Yahoo client.
+- Precommit verification: `py_compile` passed for the Yahoo client, token store,
+  alert hook, migration script, and hardening test; targeted pytest
+  `tests/test_yahoo_auth_hardening.py tests/test_yahoo_client_roster_resilience.py`
+  passed (`23 passed`); `git diff --check` had no whitespace errors.
+
+Codex S1 production validation — 2026-07-24 11:05 EDT:
+- Backend deployed to Railway production service `Fantasy-App` with message
+  `deploy S1 rotation projection plus Yahoo hardening commit`.
+  Deployment `95190ca5-2189-4f2d-ac1f-8928a956ccfc` reached `SUCCESS`
+  (`sha256:e91766ce02f5a527a8f6ecbcaa73a26b53513e2f286d6cd8b667ce196a212b26`).
+- Ran required migrations after backend deploy and before frontend deploy:
+  `/admin/migrate/probable-source` verified `source:"EXISTS"` and backfilled
+  `2666` existing rows to `official`; `/admin/migrate/probable-doubleheader`
+  verified `uq_pp_date_team_mlbam:"EXISTS"` and dropped the legacy
+  `(game_date, team)` constraint/index.
+- Handoff route `/admin/sync/probable-pitchers` is stale/nonexistent in current
+  production code (`404`). Correct trigger is
+  `/admin/ingestion/run/probable_pitchers_morning`.
+- Manual sync result: `status:"success"`, `records:87`, `official_records:87`,
+  `inferred_records:0`, `projected_records:0`, `api_errors:0`.
+  Coverage was healthy for 2026-07-24 through 2026-07-26 but collapsed after
+  2026-07-27 (`0.208`, then `0.0` for 2026-07-28 onward).
+- Backtest had to run inside the Railway container via `railway ssh`; `railway run`
+  fails locally because private Postgres host `postgres-ygnv.railway.internal`
+  does not resolve outside Railway.
+- Production backtest output: `anchor_date:"2026-07-23"`,
+  `d2_d5_total:0`, `d2_d5_exact_hit_rate:0.0`,
+  `d2_d5_within1_hit_rate:0.0`, `passes_gate:false`.
+  This is a hard validation failure: the harness found no evaluable starter
+  sample, and the sync produced zero projected rows.
+- Smoke after backend deploy: `/health` -> 200 healthy;
+  `/api/fantasy/yahoo-health` -> 200 healthy with closed circuits;
+  `/api/fantasy/streaming/recommendations?target_date=2026-07-24&days_ahead=7`
+  -> 200 with `TwoStartCount=2`, `ProjectedCount=0`
+  (`EXCELLENT:1`, `GOOD:1`).
+- Decision: **frontend deploy intentionally stopped**. Do not deploy the
+  PROJECTED tier chip or trust projected tiers until Claude explains/fixes the
+  production data gap and the backtest gate passes.
 
 ---
 
