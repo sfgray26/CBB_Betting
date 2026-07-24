@@ -249,6 +249,39 @@ team derivation (commit 6628e09) and re-run the gate. Migrations already ran
 Report deploy IDs + sync result + backtest JSON into HANDOFF.md.
 ```
 
+Codex re-validation #2 — 2026-07-24 12:15 EDT:
+- Local focused gate before deploy:
+  `py_compile backend/main.py backend/services/rotation_projection.py backend/services/probable_pitcher_fallback.py tests/test_rotation_projection.py`
+  passed; `git diff --check` passed; Python 3.11 requirements-backed pytest
+  `tests/test_rotation_projection.py tests/test_probable_pitcher_fallback.py`
+  passed (`23 passed`).
+- Backend redeployed to Railway production service `Fantasy-App`.
+  Deployment `027c4e48-3b96-4c27-85f2-ad58d8f21457` reached `SUCCESS`
+  with message `deploy S1 game membership team resolver`.
+- Health check after deploy: `/health` -> 200 healthy.
+- Data-availability result: the game-membership resolver fixed the zero-sample
+  condition. Production orphan query:
+  `mlb_player_stats LEFT JOIN mlb_game_log ON game_id` with `innings_pitched IS NOT NULL`
+  returned `orphan_ip_rows=0`, `joined_ip_rows=12841`.
+- Backtest now has a real sample but fails the trust threshold:
+  `/admin/diagnostics/rotation-backtest?days=30` ->
+  `anchor_date:"2026-07-23"`, `d2_d5_total:2483`,
+  `d2_d5_exact_hit_rate:0.3975`, `d2_d5_within1_hit_rate:0.6621`,
+  `passes_gate:false`.
+  By offset: D+2 exact/within1 `0.4690/0.7026`; D+3 `0.4194/0.6839`;
+  D+4 `0.3852/0.6822`; D+5 `0.3185/0.5812`.
+- Sync still fails at DB write time despite projecting rows:
+  `/admin/sync/probable-pitchers` -> `status:"error"`, `records:0`.
+  Bounded logs show `_sync_probable_pitchers: projected 128 team-date starter slots
+  across 30 teams`, then `Database error ('PlayerIDMapping' object has no attribute 'throws')`.
+- Streaming smoke remains official-only:
+  `/api/fantasy/streaming/recommendations?target_date=2026-07-24&days_ahead=7`
+  -> `TwoStartCount=2`, `ProjectedCount=0`, `EXCELLENT:1`, `GOOD:1`.
+- Decision: **frontend deploy remains blocked**. Next Claude action:
+  fix the `PlayerIDMapping.throws` sync crash, then tune/adjust the projection
+  algorithm or trust gate because the production D+2..D+5 accuracy is below
+  target even though row resolution now works.
+
 ---
 
 ## SESSION LOG — 2026-07-22: SEV-1 Yahoo 403 Cascade — RECOVERED, Code Fixes Deployed (UNCOMMITTED)
