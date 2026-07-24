@@ -327,6 +327,48 @@ revised backtest gate (commit fd561a3). Migrations already ran — do NOT re-run
 Report deploy IDs + sync result + full backtest JSON into HANDOFF.md.
 ```
 
+Codex completion — 2026-07-24 12:45 EDT:
+- Local focused gate before deploy:
+  `py_compile backend/main.py backend/services/rotation_projection.py backend/services/probable_pitcher_fallback.py backend/services/daily_ingestion.py tests/test_rotation_projection.py`
+  passed; `git diff --check` passed; Python 3.11 requirements-backed pytest
+  `tests/test_rotation_projection.py tests/test_probable_pitcher_fallback.py`
+  passed (`26 passed`).
+- Backend redeployed to Railway production service `Fantasy-App`.
+  Deployment `6652f7a3-3576-4fee-94d6-14a90cb68513` reached `SUCCESS`
+  with message `deploy S1 sync crash fix and revised gate`.
+- Canonical sync passed:
+  `/admin/sync/probable-pitchers` -> `status:"success"`, `records:215`,
+  `official_records:87`, `inferred_records:128`, `projected_records:128`,
+  `api_errors:0`, `elapsed_ms:2751`.
+  Coverage improved for the projected window: 2026-07-27 `23/24` (`0.958`),
+  2026-07-28 `29/30` (`0.967`), 2026-07-29 `28/30` (`0.933`),
+  2026-07-30 `18/20` (`0.900`), 2026-07-31 `28/30` (`0.933`).
+- Revised backtest gate passed:
+  `/admin/diagnostics/rotation-backtest?days=30` ->
+  `anchor_days:2`, `d2_d5_total:2483`,
+  `d2_d5_exact_hit_rate:0.4776`, `d2_d5_within1_hit_rate:0.6762`,
+  `passes_gate:true`, `meets_exact_stretch:true`.
+  By offset: D+2 `0.5997/0.6895`, D+3 `0.5113/0.7097`,
+  D+4 `0.4350/0.6774`, D+5 `0.3678/0.6290`,
+  D+6 `0.3457/0.6174`, D+7 `0.2875/0.4808`.
+- Streaming API smoke passed:
+  `/api/fantasy/streaming/recommendations?target_date=2026-07-24&days_ahead=7`
+  -> `TwoStartCount=67`, `ProjectedCount=15`, recommendations
+  `EXCELLENT:1`, `GOOD:34`, `PROJECTED:15`, `AVERAGE:9`, `AVOID:8`.
+  Example PROJECTED names: Gerrit Cole, Chase Burns, Reynaldo Lopez,
+  Kyle Bradish, Alan Rangel, Cade Cavalli, Sandy Alcantara, Seth Lugo.
+- Frontend type/build gate passed:
+  `npx tsc --noEmit` clean; `npm run build` clean (pre-existing Next `<img>`
+  and workspace-root warnings only).
+- Frontend deployed to Railway production service `observant-benevolence`.
+  Deployment `d47b4339-88d8-4387-a8e1-8ece24d294db` reached `SUCCESS`
+  with message `deploy S1 PROJECTED tier frontend`.
+- Final smoke checks:
+  backend `/health` -> 200 healthy; `/api/fantasy/yahoo-health` -> 200 healthy
+  with closed circuits; frontend `/war-room/streaming` -> 200 HTML.
+- S1 deployment status: **complete**. The PROJECTED tier is live under the revised
+  within-1-day gate documented above.
+
 ---
 
 ## SESSION LOG — 2026-07-22: SEV-1 Yahoo 403 Cascade — RECOVERED, Code Fixes Deployed (UNCOMMITTED)
