@@ -65,6 +65,82 @@ def starter_team_name(payload: object) -> tuple[str, str]:
     return team, name
 
 
+def resolve_pitcher_teams(db: Session, bdl_player_ids) -> dict[int, str]:
+    """Map bdl_player_id -> team abbreviation via game membership.
+
+    PRODUCTION REALITY: MLBPlayerStats.raw_payload carries no team at all — the
+    BDL /mlb/v1/stats endpoint omits it, and the contract's `team`/`player.team`
+    are both null, so it's absent from the stored model_dump. Team must therefore
+    be derived from game context, not the payload.
+
+    A pitcher's team is the team that appears in (almost) every game they pitched:
+    MLBPlayerStats.game_id -> MLBGameLog.{home,away}_team_id -> MLBTeam.abbreviation.
+    We take the modal team_id across the pitcher's games — their own team is in
+    every game while opponents vary, so the mode is unique whenever the pitcher
+    faced >= 2 distinct opponents (true for any rotation regular over the window).
+    Ambiguous cases (single opponent, mid-window trade) are left unresolved rather
+    than guessed. Returns only confidently-resolved ids. Never raises.
+    """
+    from collections import Counter
+
+    from backend.models import MLBGameLog, MLBPlayerStats, MLBTeam
+
+    ids = {int(b) for b in bdl_player_ids if b is not None}
+    if not ids:
+        return {}
+    try:
+        rows = (
+            db.query(MLBPlayerStats.bdl_player_id, MLBPlayerStats.game_id)
+            .filter(
+                MLBPlayerStats.bdl_player_id.in_(ids),
+                MLBPlayerStats.game_id.isnot(None),
+            )
+            .all()
+        )
+        pitcher_games: dict[int, list] = {}
+        game_ids: set = set()
+        for bid, gid in rows:
+            if gid is None:
+                continue
+            pitcher_games.setdefault(bid, []).append(gid)
+            game_ids.add(gid)
+        if not game_ids:
+            return {}
+
+        game_teams: dict[int, tuple] = {}
+        for gid, home_id, away_id in (
+            db.query(MLBGameLog.game_id, MLBGameLog.home_team_id, MLBGameLog.away_team_id)
+            .filter(MLBGameLog.game_id.in_(game_ids))
+            .all()
+        ):
+            game_teams[gid] = (home_id, away_id)
+
+        team_abbr: dict[int, str] = {
+            tid: abbr
+            for tid, abbr in db.query(MLBTeam.team_id, MLBTeam.abbreviation).all()
+        }
+
+        result: dict[int, str] = {}
+        for bid, gids in pitcher_games.items():
+            counter: Counter = Counter()
+            for g in gids:
+                pair = game_teams.get(g)
+                if pair:
+                    counter[pair[0]] += 1
+                    counter[pair[1]] += 1
+            if not counter:
+                continue
+            top = counter.most_common(2)
+            # Unique modal team only (the pitcher's team is in every game).
+            if len(top) == 1 or top[0][1] > top[1][1]:
+                abbr = normalize_team_abbr(team_abbr.get(top[0][0]))
+                if abbr:
+                    result[bid] = abbr
+        return result
+    except Exception:  # pragma: no cover - resolver must never break ingestion
+        return {}
+
+
 def parse_innings_pitched(ip: Optional[object]) -> Optional[float]:
     """Convert BDL innings-pitched notation into decimal innings."""
     if ip is None:
@@ -140,34 +216,48 @@ def build_recent_starter_candidates(
         .all()
     )
 
-    latest_by_team_player: dict[tuple[str, int], RecentStarterCandidate] = {}
-
+    # Pass 1: collect valid starter rows (team is derived after, since production
+    # raw_payload carries no team — see resolve_pitcher_teams).
+    collected: list[dict] = []
+    bdl_ids: set = set()
     for row in stat_rows:
         ip_decimal = parse_innings_pitched(row.innings_pitched)
         if ip_decimal is None or ip_decimal < min_starter_ip:
             continue
-
-        team, pitcher_name = starter_team_name(row.raw_payload)
-        if not team:
-            continue
-
+        raw_team, pitcher_name = starter_team_name(row.raw_payload)
         bdl_player_id = row.bdl_player_id
         mapping = id_map.get(bdl_player_id, {})
         if not pitcher_name:
             pitcher_name = mapping.get("full_name") or ""
         if not pitcher_name:
             continue
+        collected.append({
+            "raw_team": raw_team,
+            "bdl": bdl_player_id,
+            "mlbam": mapping.get("mlbam_id"),
+            "name": pitcher_name,
+            "date": row.game_date,
+            "ip": ip_decimal,
+        })
+        if bdl_player_id is not None:
+            bdl_ids.add(bdl_player_id)
 
+    team_map = resolve_pitcher_teams(db, bdl_ids)
+
+    latest_by_team_player: dict[tuple[str, int], RecentStarterCandidate] = {}
+    for c in collected:
+        team = c["raw_team"] or team_map.get(c["bdl"], "")
+        if not team:
+            continue
         candidate = RecentStarterCandidate(
             team=team,
-            bdl_player_id=bdl_player_id,
-            mlbam_id=mapping.get("mlbam_id"),
-            pitcher_name=pitcher_name,
-            last_start_date=row.game_date,
-            typical_ip=ip_decimal,
+            bdl_player_id=c["bdl"],
+            mlbam_id=c["mlbam"],
+            pitcher_name=c["name"],
+            last_start_date=c["date"],
+            typical_ip=c["ip"],
         )
-
-        key = (team, bdl_player_id)
+        key = (team, c["bdl"])
         existing = latest_by_team_player.get(key)
         if existing is None or candidate.last_start_date > existing.last_start_date:
             latest_by_team_player[key] = candidate

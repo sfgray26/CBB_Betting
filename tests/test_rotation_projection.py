@@ -166,10 +166,22 @@ class TestStarterTeamNameExtraction:
 
 @pytest.fixture
 def rot_db():
-    """In-memory SQLite session with just the tables build_rotation_sets reads."""
+    """In-memory SQLite session with the tables the resolver reads. mlb_game_log
+    is created via raw SQL (its JSONB column can't compile on SQLite; the resolver
+    only reads game_id + home/away_team_id)."""
+    from sqlalchemy import text
     engine = create_engine("sqlite:///:memory:")
     MLBPlayerStats.__table__.create(engine)
     PlayerIDMapping.__table__.create(engine)
+    from backend.models import MLBTeam
+    MLBTeam.__table__.create(engine)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE mlb_game_log ("
+            " game_id INTEGER PRIMARY KEY,"
+            " home_team_id INTEGER,"
+            " away_team_id INTEGER)"
+        ))
     Session = sessionmaker(bind=engine)
     db = Session()
     try:
@@ -181,21 +193,36 @@ def rot_db():
 _row_id = [0]
 
 
-def _insert_start(db, bdl_id, name, team, game_date, ip="6.2"):
-    """Insert an MLBPlayerStats row with the PRODUCTION raw_payload shape:
-    team nested under player.team, top-level team null."""
+def _team(db, team_id, abbr):
+    from backend.models import MLBTeam
+    db.add(MLBTeam(team_id=team_id, abbreviation=abbr, name=abbr, display_name=abbr,
+                   short_name=abbr, location=abbr, slug=abbr.lower(),
+                   league="National", division="West"))
+
+
+def _game(db, game_id, home_id, away_id):
+    from sqlalchemy import text
+    db.execute(text(
+        "INSERT INTO mlb_game_log (game_id, home_team_id, away_team_id) "
+        "VALUES (:g, :h, :a)"
+    ), {"g": game_id, "h": home_id, "a": away_id})
+
+
+def _insert_start(db, bdl_id, name, game_id, game_date, ip="6.2"):
+    """Insert an MLBPlayerStats row in the TRUE PRODUCTION shape: NO team anywhere
+    in raw_payload (both player.team and top-level team null). Team is derivable
+    only via game_id -> mlb_game_log."""
     _row_id[0] += 1
     db.add(MLBPlayerStats(
         id=_row_id[0],
         bdl_player_id=bdl_id,
-        game_id=None,
+        game_id=game_id,
         game_date=game_date,
         season=2026,
         innings_pitched=ip,
         era=3.0,
         raw_payload={
-            "player": {"id": bdl_id, "full_name": name, "position": "P",
-                       "team": {"abbreviation": team}},
+            "player": {"id": bdl_id, "full_name": name, "position": "P", "team": None},
             "team": None,
             "ip": ip,
         },
@@ -203,60 +230,118 @@ def _insert_start(db, bdl_id, name, team, game_date, ip="6.2"):
 
 
 class TestBuildRotationSetsProductionShape:
-    def test_rotation_set_built_from_nested_team(self, rot_db):
-        """REGRESSION: build_rotation_sets must find pitchers when team is nested
-        under player.team (prod). Before the fix this returned {} → zero projected
-        rows and zero backtest sample."""
+    """Team is null everywhere in raw_payload (real prod); it must be derived from
+    game membership (MLBPlayerStats.game_id -> mlb_game_log -> mlb_team)."""
+
+    def _seed_teams(self, db):
+        _team(db, 1, "LAD")
+        _team(db, 2, "SF")
+        _team(db, 3, "SD")
+        _team(db, 4, "COL")
+
+    def test_team_resolved_from_game_membership(self, rot_db):
+        """REGRESSION (prod ground truth 2026-07-24): raw_payload carries no team;
+        build_rotation_sets must resolve LAD from the pitcher's games. Before this
+        fix build_rotation_sets returned {} -> projected_records:0, d2_d5_total:0."""
         today = date(2026, 7, 24)
         db = rot_db
+        self._seed_teams(db)
         db.add(PlayerIDMapping(bdl_id=42, mlbam_id=999, full_name="Ace Pitcher",
                                normalized_name="ace pitcher", source="manual"))
-        # A 5-man-ish cadence: starts 12, 7, 2 days ago
-        for off in (12, 7, 2):
-            _insert_start(db, 42, "Ace Pitcher", "LAD", today - timedelta(days=off))
+        # LAD(1) starter facing 3 distinct opponents so the modal team is unique.
+        _game(db, 100, 1, 2)   # LAD home vs SF
+        _game(db, 101, 3, 1)   # LAD away at SD
+        _game(db, 102, 1, 4)   # LAD home vs COL
+        _insert_start(db, 42, "Ace Pitcher", 100, today - timedelta(days=12))
+        _insert_start(db, 42, "Ace Pitcher", 101, today - timedelta(days=7))
+        _insert_start(db, 42, "Ace Pitcher", 102, today - timedelta(days=2))
         db.commit()
 
         rotation = build_rotation_sets(db, today)
         assert "LAD" in rotation, rotation
-        pitchers = rotation["LAD"]
-        assert len(pitchers) == 1
-        p = pitchers[0]
+        p = rotation["LAD"][0]
         assert p.pitcher_name == "Ace Pitcher"
         assert p.mlbam_id == 999
-        assert p.cadence == 5  # median gap of [5, 5]
+        assert p.cadence == 5
 
-    def test_end_to_end_two_start_projection(self, rot_db):
-        """build_rotation_sets → project surfaces a 2-start pitcher over a window."""
+    def test_single_opponent_is_unresolved(self, rot_db):
+        """A pitcher whose only games are vs one opponent is ambiguous (both teams
+        tie) and is left unresolved rather than mis-assigned."""
         today = date(2026, 7, 24)
         db = rot_db
-        # Full 5-man rotation, each with a recent start ~5 days apart
-        rotation_arms = [
-            (10, "P1", 4), (11, "P2", 3), (12, "P3", 2), (13, "P4", 1), (14, "P5", 5),
-        ]
+        self._seed_teams(db)
+        _game(db, 200, 1, 2)   # LAD vs SF
+        _game(db, 201, 2, 1)   # SF vs LAD  (same two teams)
+        _insert_start(db, 55, "Ambiguous Arm", 200, today - timedelta(days=7))
+        _insert_start(db, 55, "Ambiguous Arm", 201, today - timedelta(days=2))
+        db.commit()
+        rotation = build_rotation_sets(db, today)
+        # LAD=2 and SF=2 tie -> unresolved -> pitcher excluded from every team
+        assert all("Ambiguous Arm" not in [p.pitcher_name for p in v]
+                   for v in rotation.values()), rotation
+
+    def test_end_to_end_two_start_projection(self, rot_db):
+        """build_rotation_sets -> project surfaces a 2-start pitcher over a window,
+        with team derived purely from game membership."""
+        today = date(2026, 7, 24)
+        db = rot_db
+        self._seed_teams(db)
+        opponents = [2, 3, 4]
+        gid = 300
+        # 5 LAD starters, each 3 starts vs varied opponents ~5 days apart.
+        rotation_arms = [(10, "P1", 4), (11, "P2", 3), (12, "P3", 2),
+                         (13, "P4", 1), (14, "P5", 5)]
         for bdl, name, last_off in rotation_arms:
             db.add(PlayerIDMapping(bdl_id=bdl, mlbam_id=900 + bdl, full_name=name,
                                    normalized_name=name.lower(), source="manual"))
-            for prior in (last_off + 10, last_off + 5, last_off):
-                _insert_start(db, bdl, name, "LAD", today - timedelta(days=prior))
+            for i, prior in enumerate((last_off + 10, last_off + 5, last_off)):
+                gid += 1
+                _game(db, gid, 1, opponents[i])  # LAD home vs a varied opponent
+                _insert_start(db, bdl, name, gid, today - timedelta(days=prior))
         db.commit()
 
-        # Team plays every day for 8 days
         game_dates = [today + timedelta(days=n) for n in range(8)]
         projected = project_probable_starters(db, today, {"LAD": game_dates})
-        # Some pitcher must get two projected starts in the window
         counts: dict = {}
         for (team, d), p in projected.items():
             counts[p.pitcher_name] = counts.get(p.pitcher_name, 0) + 1
         assert projected, "expected projected starters, got none"
         assert max(counts.values()) >= 2, counts
 
-    def test_backtest_actuals_read_nested_team(self, rot_db):
-        """REGRESSION: backtest actual-start extraction must read nested team too,
-        else d2_d5_total is always 0 (no evaluable sample)."""
+    def test_backtest_actuals_resolve_team(self, rot_db):
+        """REGRESSION: backtest actual-start extraction must resolve team from game
+        membership too, else d2_d5_total is always 0 (no evaluable sample)."""
         db = rot_db
+        self._seed_teams(db)
         d = date(2026, 7, 20)
-        _insert_start(db, 42, "Ace Pitcher", "LAD", d)
+        _game(db, 400, 1, 2)   # LAD vs SF
+        _game(db, 401, 3, 1)   # SD vs LAD (2nd distinct opponent -> resolvable)
+        _insert_start(db, 42, "Ace Pitcher", 400, d)
+        _insert_start(db, 42, "Ace Pitcher", 401, d - timedelta(days=5))
         db.commit()
-        actuals = _actual_starts_by_team_date(db, d, d)
-        assert ("LAD", d) in actuals
+        actuals = _actual_starts_by_team_date(db, d - timedelta(days=5), d)
+        assert ("LAD", d) in actuals, actuals
         assert "ace pitcher" in actuals[("LAD", d)]
+
+    def test_backtest_has_evaluable_sample(self, rot_db):
+        """REGRESSION for the exact production symptom (d2_d5_total:0): with the
+        game-membership team derivation the backtest finds a non-empty evaluable
+        sample. Seeds one LAD starter with a steady 5-day cadence vs varied
+        opponents over ~45 days."""
+        from backend.services.rotation_projection import backtest_rotation_projection
+        db = rot_db
+        self._seed_teams(db)
+        today = date(2026, 7, 24)
+        opponents = [2, 3, 4]  # SF, SD, COL — varied so team resolves
+        gid = 500
+        db.add(PlayerIDMapping(bdl_id=42, mlbam_id=999, full_name="Ace Pitcher",
+                               normalized_name="ace pitcher", source="manual"))
+        for i, off in enumerate(range(0, 45, 5)):  # starts 0,5,10,...,40 days ago
+            gid += 1
+            _game(db, gid, 1, opponents[i % len(opponents)])
+            _insert_start(db, 42, "Ace Pitcher", gid, today - timedelta(days=off))
+        db.commit()
+
+        result = backtest_rotation_projection(db, days=12, horizon=7)
+        assert result["anchor_date"] == today.isoformat()
+        assert result["d2_d5_total"] > 0, result  # was 0 in production

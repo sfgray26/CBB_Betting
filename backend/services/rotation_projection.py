@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from backend.models import MLBPlayerStats, PlayerIDMapping
 from backend.services.probable_pitcher_fallback import (
     parse_innings_pitched,
+    resolve_pitcher_teams,
     starter_team_name as _starter_team_name,
 )
 
@@ -182,38 +183,47 @@ def build_rotation_sets(
         .all()
     )
 
-    # (team, bdl_id) -> {"starts": [dates], "ips": [ip], "name": str, "mlbam": id}
-    agg: dict[tuple[str, Optional[int]], dict] = {}
+    # Aggregate per pitcher (bdl_id). Team is resolved AFTER, from game context —
+    # production raw_payload carries no team (see resolve_pitcher_teams).
+    # bdl_id -> {"starts": [dates], "ips": [ip], "name": str, "mlbam": id, "raw_team": str}
+    agg: dict[Optional[int], dict] = {}
     for row in stat_rows:
         ip = parse_innings_pitched(row.innings_pitched)
         if ip is None or ip < min_starter_ip:
             continue
-        team, name = _starter_team_name(row.raw_payload)
-        if not team:
-            continue
+        raw_team, name = _starter_team_name(row.raw_payload)
         bdl_id = row.bdl_player_id
+        if bdl_id is None:
+            continue
         mapping = id_map.get(bdl_id, {})
         if not name:
             name = mapping.get("full_name") or ""
         if not name:
             continue
-        key = (team, bdl_id)
         entry = agg.setdefault(
-            key,
-            {"starts": [], "ips": [], "name": name, "mlbam": mapping.get("mlbam_id"), "team": team, "bdl": bdl_id},
+            bdl_id,
+            {"starts": [], "ips": [], "name": name, "mlbam": mapping.get("mlbam_id"),
+             "bdl": bdl_id, "raw_team": ""},
         )
         entry["starts"].append(row.game_date)
         entry["ips"].append(ip)
+        if raw_team and not entry["raw_team"]:
+            entry["raw_team"] = raw_team
+
+    team_map = resolve_pitcher_teams(db, set(agg.keys()))
 
     by_team: dict[str, list[PitcherState]] = {}
     for entry in agg.values():
+        team = entry["raw_team"] or team_map.get(entry["bdl"], "")
+        if not team:
+            continue  # team could not be resolved — skip rather than guess
         starts = sorted(entry["starts"])
         if not starts:
             continue
         if (today - starts[-1]).days > max_idle_days:
             continue  # idle too long — defer to official probables
         state = PitcherState(
-            team=entry["team"],
+            team=team,
             bdl_player_id=entry["bdl"],
             mlbam_id=entry["mlbam"],
             pitcher_name=entry["name"],
@@ -221,7 +231,7 @@ def build_rotation_sets(
             typical_ip=round(sum(entry["ips"]) / len(entry["ips"]), 2),
             cadence=median_cadence(starts),
         )
-        by_team.setdefault(entry["team"], []).append(state)
+        by_team.setdefault(team, []).append(state)
 
     # Keep only the <=N most recent distinct starters per team.
     for team, pitchers in by_team.items():
@@ -287,15 +297,28 @@ def _actual_starts_by_team_date(
         )
         .all()
     )
-    out: dict[tuple[str, date], set[str]] = {}
+    # Collect valid starter rows; team is resolved after (raw_payload has none in prod).
+    collected: list[tuple] = []
+    bdl_ids: set = set()
     for row in rows:
         ip = parse_innings_pitched(row.innings_pitched)
         if ip is None or ip < min_starter_ip:
             continue
-        team, name = _starter_team_name(row.raw_payload)
-        if not team or not name:
+        raw_team, name = _starter_team_name(row.raw_payload)
+        if not name:
             continue
-        out.setdefault((team, row.game_date), set()).add(name.strip().lower())
+        collected.append((row.bdl_player_id, row.game_date, raw_team, name))
+        if row.bdl_player_id is not None:
+            bdl_ids.add(row.bdl_player_id)
+
+    team_map = resolve_pitcher_teams(db, bdl_ids)
+
+    out: dict[tuple[str, date], set[str]] = {}
+    for bid, gdate, raw_team, name in collected:
+        team = raw_team or team_map.get(bid, "")
+        if not team:
+            continue
+        out.setdefault((team, gdate), set()).add(name.strip().lower())
     return out
 
 
