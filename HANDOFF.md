@@ -1,7 +1,45 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
 > **Date:** 2026-07-10 | **Status:** ✅ ROOT CAUSE FIXED — 100% PROJECTION COVERAGE, TABLE REPAIRED, CONSTRAINT INSTALLED
-> **Branch:** `stable/cbb-prod` | **Commit:** a60be4a
+> **Branch:** `stable/cbb-prod` | **Commit:** af342b7
+
+---
+
+## SESSION LOG — 2026-07-25: Cleanup — Remove TEMPORARY ROUTER_EXECUTED marker (COMMITTED af342b7)
+
+**Item:** HANDOFF.md Cleanup Queue #1 — Remove temporary `logger.info("ROUTER_EXECUTED")`
+marker from `get_fantasy_roster` in `backend/routers/fantasy.py`.
+
+**Why:** The marker was added during the 2026-07-10 P0 Surgical Fixes (route
+shadowing fix) to validate in production that the router-owned
+`/api/fantasy/roster` handler was executing instead of the deleted inline
+route. Validation completed successfully; the marker is no longer needed and
+clutters production logs.
+
+**Change:** Removed 3 lines (TEMPORARY comment + `logger.info("ROUTER_EXECUTED")`)
+from `backend/routers/fantasy.py`.
+
+**Verification:**
+- `python -m py_compile backend/routers/fantasy.py` → PASS
+- `pytest tests/test_rotation_projection.py tests/test_yahoo_auth_hardening.py` → 31 passed, 0 failed
+- `grep -n 'ROUTER_EXECUTED' backend/routers/fantasy.py` → no matches (exit code 1)
+
+**Reconciliation note:** Multiple prior HANDOFF.md entries list work as
+"UNCOMMITTED" (e.g., 2026-07-22 Track C, UAT Bug Triage, P28 Optimizer).
+Git log confirms these were committed:
+- `e1edb4d` — Yahoo §0 hardening
+- `8e1ffed` — Track C (War Room sim direction, Weekly Preview, optimizer tooltip)
+- `dcb46a9` — P28 roster move payload, war room 422 fallback, K-category W/L
+- `fd561a3` — S1 sync crash fix + backtest gate revision
+
+No ghost changes — this session modified only `backend/routers/fantasy.py`.
+
+---
+
+## SESSION LOG — 2026-07-24: Yahoo §0 Backend Hardening — IMPLEMENTED (COMMITTED e1edb4d)
+
+> **Date:** 2026-07-10 | **Status:** ✅ ROOT CAUSE FIXED — 100% PROJECTION COVERAGE, TABLE REPAIRED, CONSTRAINT INSTALLED
+> **Branch:** `stable/cbb-prod` | **Commit:** af342b7
 
 ---
 
