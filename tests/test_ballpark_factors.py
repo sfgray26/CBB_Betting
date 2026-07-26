@@ -11,7 +11,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.fantasy_baseball.ballpark_factors import get_park_factor
+import backend.fantasy_baseball.ballpark_factors as ballpark_factors
 from backend.models import ParkFactor, Base
+
+
+@pytest.fixture(autouse=True)
+def clear_park_factor_caches():
+    """Clear global park-factor caches before each test to prevent cross-test pollution."""
+    ballpark_factors._park_factor_cache.clear()
+    get_park_factor.cache_clear()
+    yield
+    ballpark_factors._park_factor_cache.clear()
+    get_park_factor.cache_clear()
 
 
 @pytest.fixture
