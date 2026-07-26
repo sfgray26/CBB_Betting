@@ -1,7 +1,42 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-10 | **Status:** ✅ ROOT CAUSE FIXED — 100% PROJECTION COVERAGE, TABLE REPAIRED, CONSTRAINT INSTALLED
-> **Branch:** `stable/cbb-prod` | **Commit:** af342b7
+> **Date:** 2026-07-26 | **Status:** ✅ ROOT CAUSE FIXED — 100% PROJECTION COVERAGE, TABLE REPAIRED, CONSTRAINT INSTALLED
+> **Branch:** `stable/cbb-prod` | **Commit:** f0f061a
+
+---
+
+## SESSION LOG — 2026-07-26: Fix 6 Order-Dependent Flaky Tests in `test_ballpark_factors.py` (COMMITTED f0f061a)
+
+**Item:** HANDOFF.md Cleanup Queue #2 — Fix pre-existing order-dependent test
+failures in `tests/test_ballpark_factors.py` that fail under full-suite runs
+but pass in isolation.
+
+**Why:** The ballpark factor tests create isolated SQLite fixtures but
+`get_park_factor()` checks the global `_park_factor_cache` before the
+optional `_db_session` parameter. When `test_auto_stream.py` uses
+`TestClient(app)` (line 219), the FastAPI lifespan runs and calls
+`load_park_factors()`, which populates the global cache with real DB values.
+Later ballpark factor tests then hit stale cached values (e.g., COL hr=1.05
+from the production Savant snapshot instead of 1.30 from the test fixture).
+
+**Change:** Added an `autouse=True` fixture `clear_park_factor_caches` to
+`tests/test_ballpark_factors.py` that clears both `_park_factor_cache` and
+`get_park_factor`'s lru_cache before and after every test. Pattern matches
+the existing isolation approach in `test_savant_park_factors.py`.
+
+**Files Modified:**
+- `tests/test_ballpark_factors.py` — added 11 lines (import + fixture)
+
+**Verification:**
+- `venv/Scripts/python -m py_compile tests/test_ballpark_factors.py` → PASS
+- `venv/Scripts/python -m pytest tests/test_ballpark_factors.py` (isolation) → 9 passed, 0 failed
+- `venv/Scripts/python -m pytest tests/test_auto_stream.py tests/test_ballpark_factors.py` → all pass
+- `venv/Scripts/python -m pytest tests/test_admin_*.py tests/test_alerts.py tests/test_auto_stream.py tests/test_availability_guard.py tests/test_backfill_yahoo_keys.py tests/test_backtesting_harness.py tests/test_balldontlie_mlb.py tests/test_ballpark_factors.py` → 158 passed, 2 skipped, 0 failed
+
+**Cleanup-queue impact:** This resolves item #2 from the 2026-07-10 cleanup
+queue ("6 tests in tests/test_ballpark_factors.py fail under full-suite runs").
+
+No ghost changes — this session modified only `tests/test_ballpark_factors.py`.
 
 ---
 
