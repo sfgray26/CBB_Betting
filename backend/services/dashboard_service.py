@@ -336,7 +336,7 @@ class DashboardService:
             
             # Validate roster data
             validation = self.reliability_engine.validate_yahoo_roster(
-                roster, timestamp=datetime.utcnow()
+                roster, timestamp=datetime.now(ZoneInfo("America/New_York"))
             )
             
             if not validation.is_valid:
