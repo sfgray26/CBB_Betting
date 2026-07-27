@@ -1,7 +1,38 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-26 | **Status:** ✅ ROOT CAUSE FIXED — 100% PROJECTION COVERAGE, TABLE REPAIRED, CONSTRAINT INSTALLED
-> **Branch:** `stable/cbb-prod` | **Commit:** f0f061a
+> **Date:** 2026-07-27 | **Status:** ✅ UTCNOW CLEANUP — DASHBOARD_SERVICE FIXED
+> **Branch:** `stable/cbb-prod` | **Commit:** 8c1a296
+> **Branch:** `stable/cbb-prod` | **Commit:** 8c1a296
+
+---
+
+> **Date:** 2026-07-27 | **Status:** ✅ UTCNOW CLEANUP — DASHBOARD_SERVICE FIXED
+> **Branch:** `stable/cbb-prod` | **Commit:** 8c1a296
+
+---
+
+## SESSION LOG — 2026-07-27: Fix Pre-existing `datetime.utcnow()` in `dashboard_service.py` (COMMITTED 8c1a296)
+
+**Item:** HANDOFF.md 2026-07-22 SEV-1 session log notes a pre-existing
+`datetime.utcnow()` at `dashboard_service.py:339` that was "out of scope for
+this hotfix." This violates the standing rule in `AGENTS.md` and
+`docs_index.md`: *No `datetime.utcnow()` for MLB — always
+`datetime.now(ZoneInfo("America/New_York"))`*.
+
+**Change:** Single-line replacement in `backend/services/dashboard_service.py`
+(`_get_lineup_gaps` method): `datetime.utcnow()` →
+`datetime.now(ZoneInfo("America/New_York"))` for the roster-validation
+`timestamp` parameter passed to `validate_yahoo_roster()`.
+
+**Files Modified:**
+- `backend/services/dashboard_service.py` — 1 line changed
+
+**Verification:**
+- `venv/Scripts/python -m py_compile backend/services/dashboard_service.py` → PASS
+- `venv/Scripts/python -m pytest tests/test_dashboard_il_crisis.py tests/test_dashboard_service.py` → 6 passed, 0 failed
+- `grep -n 'utcnow' backend/services/dashboard_service.py` → no matches (exit code 1)
+
+No ghost changes — this session modified only `backend/services/dashboard_service.py`.
 
 ---
 
