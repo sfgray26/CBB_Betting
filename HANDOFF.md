@@ -112,6 +112,35 @@ smoke checks, ops triage). No application code modified.
 
 ---
 
+## Bet-count reconciliation — DECISION + fix (COMMITTED 405c0b0)
+
+**Decision: CODE FIX (option 2), not data cleanup.** Rationale: durable (future
+stale orphans can't recur), testable, and needs NO production data mutation.
+
+**What changed:** `portfolio.load_from_db` pending query now also filters
+`BetLog.timestamp >= now - PORTFOLIO_PENDING_LOOKBACK_DAYS` (default 14d,
+env-configurable). Bets settle same-day, so an unsettled row older than the
+window is a stale orphan (the 2 archived-season CBB bets) and no longer counts as
+a live open position. Cutoff uses `datetime.utcnow()` because these timestamps are
+stored naive-UTC (engine sets no PG session TZ) — same convention as persist_alerts.
+
+**Constraints honored:** NO Kelly/risk-math change (only WHICH unsettled bets count
+as live exposure changes); settled-bet bankroll reconstruction untouched; frozen-CBB
+risk model preserved.
+
+**Verification:** `test_portfolio_pending_scope.py` (3 tests: archived ~120d-old
+unsettled bets do NOT inflate open positions → 1 recent counts not 3; recent
+unsettled all count; settled never pending). Full portfolio suite 30 passed;
+imports clean.
+
+**Production data action required by Codex: NONE.** The fix makes the 2 orphan
+`bet_logs` rows simply not count. Optional hygiene only: Codex MAY void/settle the
+2 archived-season null-outcome CBB rows, but it is not required and must NOT touch
+Kelly/bankroll fields. After deploy, `/admin/portfolio/status` should report
+`pending_positions: 0` (matching Bet History) with no data edits.
+
+---
+
 ## UAT 2026-07-28 CYCLE 2 — Claude fixes (COMMITTED 23ce1df)
 
 - **Alert future-timestamp — REAL fix (my cycle-1 fix was a no-op).** The stored
