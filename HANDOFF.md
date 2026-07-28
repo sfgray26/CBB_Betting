@@ -6,6 +6,51 @@
 
 ---
 
+## UAT 2026-07-28 (full 15-screen pass) — Claude triage + fixes (COMMITTED 3eab991)
+
+**Fixed by Claude (in lane):**
+1. **CRITICAL — streaming PROJECTED tier masked bad-quality verdicts.** Any
+   projected 2-starter showed "Projected" regardless of Quality, incl. -2.0 scores
+   that should read AVOID (62% of the board never surfaced a verdict). Fix: projected
+   + avg_quality < -0.3 → AVOID; PROJECTED only for decent-or-better unconfirmed arms.
+   `fantasy.py` streaming route + regression test.
+2. **Streaming sort arrow inverted** ("Quality ↓" listed worst-to-best) — reversed
+   ternary in `streaming-recommendations.tsx`.
+3. **Waiver "No closers on your roster" fired while STALE·unavailable** — FA-derived
+   `closer_alert` triggered NO_CLOSERS on an empty (Yahoo-down) list. Now gated on
+   roster + FA data present. `fantasy.py` waiver route.
+4. **Alert "in about 4 hours" future timestamp** — `DBAlert.created_at` is naive ET;
+   `.isoformat()` dropped the offset → browser read it as UTC (+4h) → newest alert
+   appeared in the future. New `models.et_isoformat()` stamps the ET offset; applied
+   to both `/api/performance/alerts` serializers (main.py + edge.py).
+5. Streaming risk note "One start projected" → "1 of 2 starts projected" (was
+   confusing next to the "2 starts" header).
+
+**Routed / not Claude's lane (needs Codex/operator or betting-side owner):**
+- **CRITICAL — Yahoo auth circuit OPEN (4-day YAHOO_AUTH_OUTAGE).** Not code —
+  the alert note is correct: re-run OAuth, update Railway YAHOO_* token vars, then
+  redeploy. This is Track A (operator + Codex). The whole fantasy/roster stack stays
+  down until the Yahoo grant is refreshed. **#1 priority for the operator.**
+- **CRITICAL — bet-count reconciliation** (Odds Monitor "2 pending" vs Bet History
+  0). Diagnosis: `/admin/portfolio/status` returns `pending_positions =
+  len(portfolio_manager.positions)` (main.py:4115) loaded via `pm.load_from_db`,
+  a DIFFERENT source than `BetLog` (Bet History). The portfolio manager holds 2
+  stale/orphan positions not reflected in BetLog. Betting-lane (CBB model frozen) —
+  needs the portfolio-manager owner to reconcile its position store with BetLog or
+  clear stale positions. NOT touched (frozen-model guardrail).
+- **odds/slate pipeline: "Last Poll: Never", 0 games 2026-07-28.** MLB odds poll
+  (`/admin/odds-monitor/status`) never recorded a poll — job not executing in prod
+  or last_poll not persisted. Ops/pipeline (MLB betting in-dev) → Codex.
+- **quality scores clustered at 2.0 / 0.0, no "Excellent" ever** (minor). 0.0 =
+  pitchers with no rolling-ERA data (mlbam_to_era miss); 2.0 = the `(raw-0.5)*4`
+  clamp. Improves as ERA coverage / projected-row ERA fills in. Ties to the same
+  ID-mapping/coverage gaps; note, not urgent.
+
+Verification: py_compile + imports clean; tsc + npm build clean; streaming +
+waiver-sort suites pass.
+
+---
+
 > **Date:** 2026-07-28 | **Status:** ✅ AUTONOMOUS AUDIT — NO ACTIONABLE ITEMS, HEALTHY
 > **Branch:** `stable/cbb-prod` | **Commit:** `58563ed`
 
