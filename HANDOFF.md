@@ -1,7 +1,40 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-28 | **Status:** ✅ UAT FIXES DEPLOYED; YAHOO AUTH STILL DOWN
-> **Branch:** `stable/cbb-prod` | **Commit:** `260670c` local deploy bundle (`3eab991` code + `260670c` handoff)
+> **Date:** 2026-07-28 | **Status:** ✅ MLB ODDS STATUS FIX DEPLOYED; YAHOO AUTH STILL DOWN
+> **Branch:** `stable/cbb-prod` | **Commit:** `7a5db4a` local deploy bundle (`3ff7df8` code + `7a5db4a` handoff)
+
+---
+
+## SESSION LOG — 2026-07-28: Codex Deploy — MLB Odds Status Endpoint/UI
+
+**Scope:** Reviewed Claude's MLB odds status fix `3ff7df8` and handoff
+`7a5db4a`; stayed in Codex lane (verification, Railway deploys, production
+smoke checks). No application code modified by Codex.
+
+**Local verification before deploy:**
+- `git diff --check` -> PASS
+- `py_compile backend/main.py tests/test_mlb_odds_status.py` -> PASS
+- `pytest tests/test_mlb_odds_status.py -q` -> 2 passed, 1 warning
+- Frontend `npx tsc --noEmit` -> PASS
+- Frontend `npm run build` -> PASS (pre-existing Next image/root warnings only)
+
+**Railway production deploys:**
+- Backend `Fantasy-App`: deployment `9c36644b-975d-4f2a-b88b-7c2f2cdc5d85` -> SUCCESS, image `sha256:342dad4d057eb8e4ac1c847a7192dab4345cc0d41e241c9d38355d74fb4e167c`
+- Frontend `observant-benevolence`: deployment `e99ae2c8-4f18-436a-84fd-83b9800b0ee5` -> SUCCESS, image `sha256:0ec669636cbdaec7d6784e3bc1f74bec3fdd7f0c947d2aba577846fc34a3057d`
+
+**Production smoke checks:**
+- Backend `/health` -> 200, `{"status":"healthy","database":"connected","scheduler":"running"}`
+- Frontend `/odds-monitor` -> 200
+- Protected `/admin/mlb-odds/status` after the next scheduled poll -> 200,
+  `active:true`, `enabled:true`, `games_tracked:11`, `snapshots_today:1902`,
+  `last_status:"success"`, `last_poll:"2026-07-28T14:00:55.651620-04:00"`,
+  `next_run:"2026-07-28T14:05:54.023826-04:00"`, quota fields null/NA.
+
+**Notes:**
+- The previous docs-only branch-triggered frontend deployment `656fda3a...`
+  resolved as `SKIPPED` and is no longer dangling.
+- Yahoo auth remains separate/unresolved; this deploy only fixes MLB odds
+  status sourcing and UI.
 
 ---
 
