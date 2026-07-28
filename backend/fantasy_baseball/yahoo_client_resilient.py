@@ -200,6 +200,10 @@ class YahooFantasyClient:
 
         self.client_id = os.getenv("YAHOO_CLIENT_ID", "")
         self.client_secret = os.getenv("YAHOO_CLIENT_SECRET", "")
+        # Must EXACTLY match a Redirect URI registered on the Yahoo app. "oob" is
+        # deprecated and, if not registered, yields tokens that fail Fantasy calls
+        # with "application is not authorized". Override via YAHOO_REDIRECT_URI.
+        self.redirect_uri = os.getenv("YAHOO_REDIRECT_URI", "oob")
         self.league_id = os.getenv("YAHOO_LEAGUE_ID", "72586")
         self.league_key = f"{YAHOO_SPORT}.l.{self.league_id}"
         self._refresh_token = os.getenv("YAHOO_REFRESH_TOKEN", "")
@@ -251,7 +255,7 @@ class YahooFantasyClient:
     def get_authorization_url(self) -> str:
         params = {
             "client_id": self.client_id,
-            "redirect_uri": "oob",
+            "redirect_uri": self.redirect_uri,
             "response_type": "code",
             "language": "en-us",
         }
@@ -264,7 +268,7 @@ class YahooFantasyClient:
             data={
                 "grant_type": "authorization_code",
                 "code": auth_code.strip(),
-                "redirect_uri": "oob",
+                "redirect_uri": self.redirect_uri,
             },
             auth=(self.client_id, self.client_secret),
             headers={"Content-Type": "application/x-www-form-urlencoded"},

@@ -126,9 +126,14 @@ curl -X POST "$BASE/admin/yahoo/clear-token-store" -H "X-API-Key: $ADMIN_KEY"
 - `status:"ok"` → FIXED (env tokens were valid; DB store was the culprit). Done.
 - `status:"cleared_but_unauthorized"` → env tokens also bad; go to Step 1.
 
-**Step 1. Confirm the Yahoo developer app (developer.yahoo.com) has Fantasy Sports
-(Read or Read/Write) permission ENABLED and SAVED. If unsure, re-save it, or create
-a NEW app (then update Railway YAHOO_CLIENT_ID + YAHOO_CLIENT_SECRET and redeploy).**
+**Step 1. Verify at developer.yahoo.com that the app SHOWS Fantasy Sports (Read or
+Read/Write) permission present. Do NOT edit/re-save the app config — saving can
+strip existing permissions (observed Yahoo behavior since 2025-10; confirmed during
+the 2026-07-22/28 auth saga). Only create a NEW app or edit when intentionally
+changing credentials (then update Railway YAHOO_CLIENT_ID + YAHOO_CLIENT_SECRET and
+redeploy). NOTE: as of 2026-07 the Yahoo app-creation form no longer offers Fantasy
+Sports permissions at all — a new app CANNOT replace the old one's grant, so
+preserving the existing app is critical.**
 
 **Step 2. Full server-side re-auth (no local run / no Railway token juggling):**
 ```
@@ -139,8 +144,8 @@ curl -X POST "$BASE/admin/yahoo/reauth?code=THE_CODE" -H "X-API-Key: $ADMIN_KEY"
 ```
 - `status:"ok"` → FIXED (in-memory tokens updated + DB-persisted; no redeploy needed).
 - `status:"tokens_stored_but_unauthorized"` → the app grant still lacks Fantasy
-  auth. The Yahoo app permission is the problem (Step 1) — fix/recreate the app,
-  then repeat Step 2.
+  auth. Verify the permission is present (Step 1 — do NOT re-save the app config);
+  recreate the app only if intentionally changing credentials, then repeat Step 2.
 
 **Verify:** `curl "$BASE/admin/yahoo/test" -H "X-API-Key:$ADMIN_KEY"` → league name +
 team key; `GET /api/fantasy/yahoo-health` → status:"healthy".
@@ -148,6 +153,48 @@ team key; `GET /api/fantasy/yahoo-health` → status:"healthy".
 Tooling is code-complete + tested (test_yahoo_reauth.py, 12 pass). The actual grant
 restore is operator-side (browser consent + Yahoo app permission) — Claude cannot
 perform the Yahoo consent.
+
+---
+
+## SESSION LOG — 2026-07-28: Blocker fixes (Kimi CLI, operator-delegated)
+
+**1. `portfolio.py` utcnow ban violation (from 405c0b0).** Replaced
+`datetime.utcnow()` with `datetime.now(timezone.utc).replace(tzinfo=None)` — tz-aware
+construction per AGENTS.md, naïved to match the naive-UTC `bet_logs.timestamp`
+storage convention. Identical instant → identical pending-lookback semantics; no
+Kelly/risk-math or behavior change.
+
+**2. Yahoo docs/API "re-save the app" guidance corrected (HANDOFF Step 1 +
+`main.py` auth-url docstring + reauth failure message).** New guidance: verify
+Fantasy Sports permission is PRESENT; do NOT edit/re-save the app config (saving
+can strip permissions — observed Yahoo behavior, confirmed 2026-07-22/28); only
+create a new app or edit when intentionally changing credentials. Also documented:
+as of 2026-07 the Yahoo app-creation form no longer offers Fantasy Sports
+permissions, so the existing app's grant is irreplaceable.
+
+**3. `YAHOO_REDIRECT_URI` in `yahoo_client_resilient.py` — DECISION: KEEP.**
+Justification (2026-07-28 live debugging): the hardcoded `"oob"` was not a
+registered Redirect URI on the production app; grants minted via `oob` exchanged
+fine but were rejected on every Fantasy API call. Using the registered
+`https://localhost:8000/callback` produced working exchanges. Default remains
+`"oob"` (backward compatible; the refresh path never uses redirect_uri).
+Regression coverage: `tests/test_yahoo_redirect_uri.py` (3 tests: default,
+auth-URL override, exchange posts matching URI — no token values).
+**Railway requirement: set `YAHOO_REDIRECT_URI=https://localhost:8000/callback`
+(must EXACTLY match a Redirect URI registered on the Yahoo app) or the
+`/admin/yahoo/auth-url` consent flow mints unauthorized grants again.**
+
+**Codex deploy instructions:**
+1. `railway variables --set "YAHOO_REDIRECT_URI=https://localhost:8000/callback"`
+   (variable change triggers redeploy of this commit).
+2. After deploy, verify: `curl "$BASE/admin/yahoo/test" -H "X-API-Key: $ADMIN_KEY"`
+   and `GET /api/fantasy/yahoo-health`.
+3. If grant is still unauthorized, follow the runbook above (clear-token-store →
+   auth-url → reauth) — the consent URL will now carry the correct redirect_uri.
+
+**Verification:** py_compile clean (portfolio.py, main.py, yahoo_client_resilient.py);
+24 focused tests pass (test_yahoo_redirect_uri, test_yahoo_reauth,
+test_portfolio_pending_scope, test_portfolio). No token values in logs/tests.
 
 ---
 

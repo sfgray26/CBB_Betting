@@ -30,7 +30,7 @@ import os
 import math
 from backend.utils.env_utils import get_float_env
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -351,10 +351,13 @@ class PortfolioManager:
         # permanently inflated "open positions" (2) vs Bet History (0). Timestamps
         # are stored naive-UTC (engine sets no PG session TZ), so compare against a
         # naive-UTC cutoff, matching the convention used elsewhere (persist_alerts).
+        # Tz-aware construction (AGENTS.md bans datetime.utcnow()), then naïved to
+        # match the naive-UTC storage convention — identical instant, so identical
+        # lookback semantics.
         # This changes only WHICH unsettled bets count as live exposure — no
         # Kelly/risk-math change, and settled-bet bankroll reconstruction below is
         # untouched.
-        cutoff = datetime.utcnow() - timedelta(days=_PENDING_LOOKBACK_DAYS)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=_PENDING_LOOKBACK_DAYS)
         pending_bets = (
             db.query(BetLog)
             .filter(BetLog.outcome.is_(None))

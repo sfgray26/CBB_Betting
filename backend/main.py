@@ -4692,8 +4692,10 @@ async def yahoo_auth_url(user: str = Depends(verify_admin_api_key)):
     browser. Approve access, copy the shown code, then POST it to
     /admin/yahoo/reauth.
 
-    PRECONDITION: the Yahoo developer app (developer.yahoo.com) must have Fantasy
-    Sports (Read or Read/Write) permission enabled and SAVED — otherwise the grant
+    PRECONDITION: verify at developer.yahoo.com that the app shows Fantasy Sports
+    (Read or Read/Write) permission present. Do NOT edit/re-save the app config —
+    saving can strip existing permissions (observed Yahoo behavior). Only create
+    a new app or edit when intentionally changing credentials. Otherwise the grant
     will still return 403 and step 2 will report it.
     """
     client = get_yahoo_client()
@@ -4743,9 +4745,11 @@ async def yahoo_reauth(code: str, user: str = Depends(verify_admin_api_key)):
             "message": (
                 "Tokens exchanged and persisted, but the Fantasy API still rejected "
                 "them — the Yahoo app grant lacks Fantasy Sports authorization. At "
-                "developer.yahoo.com, enable + SAVE Fantasy Sports (Read/Write) "
-                "permission on the app (or create a new app and update "
-                "YAHOO_CLIENT_ID/SECRET), then repeat /admin/yahoo/auth-url -> reauth."
+                "developer.yahoo.com, verify the app shows Fantasy Sports "
+                "(Read/Write) permission present. Do NOT edit/re-save the app config "
+                "— saving can strip existing permissions. Only create a new app (and "
+                "update YAHOO_CLIENT_ID/SECRET) or edit when intentionally changing "
+                "credentials, then repeat /admin/yahoo/auth-url -> reauth."
             ),
             "error": str(exc),
         }
