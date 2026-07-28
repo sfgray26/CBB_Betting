@@ -268,6 +268,11 @@ export const endpoints = {
   oddsMonitorStatus: () =>
     apiFetch<OddsMonitorStatus>('/admin/odds-monitor/status'),
 
+  // MLB fantasy odds health (DailyIngestionOrchestrator mlb_odds job). The legacy
+  // oddsMonitorStatus above is CBB-only and reads "Never"/0 when CBB is off-season.
+  mlbOddsStatus: () =>
+    apiFetch<OddsMonitorStatus>('/admin/mlb-odds/status'),
+
   portfolioStatusFull: () =>
     apiFetch<PortfolioStatusFull>('/admin/portfolio/status'),
 

@@ -52,8 +52,11 @@ export default function OddsMonitorPage() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ['odds-monitor-status'],
-    queryFn: endpoints.oddsMonitorStatus,
+    // MLB fantasy odds health from the DailyIngestionOrchestrator mlb_odds job.
+    // The legacy CBB OddsMonitor endpoint reads "Never"/0 games while CBB is
+    // off-season and must NOT be presented as MLB odds health.
+    queryKey: ['mlb-odds-status'],
+    queryFn: endpoints.mlbOddsStatus,
     refetchInterval: 60_000,
   })
 

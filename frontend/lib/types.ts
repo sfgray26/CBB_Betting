@@ -117,6 +117,12 @@ export interface OddsMonitorStatus {
   quota_remaining: number | null
   quota_updated_at: string | null
   quota_is_low: boolean
+  // MLB odds source (/admin/mlb-odds/status) adds these; absent for legacy CBB.
+  source?: string
+  enabled?: boolean
+  snapshots_today?: number
+  last_status?: string | null
+  next_run?: string | null
 }
 
 export interface PortfolioStatusFull {

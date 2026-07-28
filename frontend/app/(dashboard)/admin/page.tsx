@@ -278,8 +278,9 @@ function SchedulerPanel() {
 
 function OddsMonitorPanel() {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['odds-monitor-status'],
-    queryFn: endpoints.oddsMonitorStatus,
+    // MLB fantasy odds health (mlb_odds job), not the off-season CBB OddsMonitor.
+    queryKey: ['mlb-odds-status'],
+    queryFn: endpoints.mlbOddsStatus,
     refetchInterval: 30_000,
   })
 

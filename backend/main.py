@@ -4138,6 +4138,70 @@ async def get_odds_monitor_status(user: str = Depends(verify_api_key)):
         }
 
 
+@app.get("/admin/mlb-odds/status")
+async def get_mlb_odds_status(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """MLB fantasy odds pipeline health, sourced from the DailyIngestionOrchestrator
+    `mlb_odds` job (BDL) — NOT the legacy CBB OddsMonitor (/admin/odds-monitor/status),
+    which is inactive when CBB_SEASON_ACTIVE is unset/false and would falsely report
+    "Last Poll: Never" / 0 games for the MLB fantasy app.
+
+    Shape mirrors OddsMonitorStatus so the frontend renders unchanged. BDL GOAT is
+    not OddsAPI-quota-limited, so quota fields are null (render as "—").
+    """
+    from zoneinfo import ZoneInfo as _ZI
+
+    job: dict = {}
+    if _ingestion_orchestrator is not None:
+        try:
+            job = _ingestion_orchestrator.get_status().get("mlb_odds", {}) or {}
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("mlb-odds status: orchestrator status failed: %s", exc)
+
+    enabled = bool(job.get("enabled", _ingestion_orchestrator is not None))
+    last_status = job.get("last_status")
+    last_poll = job.get("last_run")  # already an ET-aware isoformat from _record_job_run
+
+    # Real data: today's MLB games carrying odds snapshots.
+    today = datetime.now(_ZI("America/New_York")).date()
+    games_tracked = 0
+    snapshots_today = 0
+    try:
+        row = db.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT s.game_id) AS games, COUNT(*) AS snaps
+                FROM mlb_odds_snapshot s
+                JOIN mlb_game_log g ON g.game_id = s.game_id
+                WHERE g.game_date = :today
+                """
+            ),
+            {"today": today},
+        ).fetchone()
+        if row:
+            games_tracked = int(row.games or 0)
+            snapshots_today = int(row.snaps or 0)
+    except Exception as exc:
+        logger.warning("mlb-odds status: snapshot count failed: %s", exc)
+
+    return {
+        "source": "mlb_odds",
+        "active": bool(enabled and last_status == "success"),
+        "enabled": enabled,
+        "games_tracked": games_tracked,
+        "snapshots_today": snapshots_today,
+        "last_poll": last_poll,
+        "last_status": last_status,
+        "next_run": job.get("next_run"),
+        # BDL GOAT tier — no OddsAPI-style call quota. Nulls render as "—".
+        "quota_remaining": None,
+        "quota_updated_at": None,
+        "quota_is_low": False,
+    }
+
+
 @app.get("/admin/oracle/flagged", response_model=OracleFlaggedResponse)
 async def get_oracle_flagged(
     days_back: int = Query(7, ge=1, le=90, description="Look-back window in days"),
