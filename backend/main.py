@@ -30,6 +30,7 @@ from backend.models import (
     PerformanceSnapshot,
     ModelParameter,
     DBAlert,
+    et_isoformat,
     IngestedInjury,
     SessionLocal,
 )
@@ -2512,7 +2513,7 @@ async def get_performance_alerts(
                 "threshold": a.threshold,
                 "current_value": a.current_value,
                 "acknowledged": a.acknowledged,
-                "created_at": a.created_at.isoformat(),
+                "created_at": et_isoformat(a.created_at),
             }
             for a in db_alerts
         ],

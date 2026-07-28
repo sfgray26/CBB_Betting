@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date
+from typing import Optional
 from zoneinfo import ZoneInfo
 import logging
 import os
@@ -40,6 +41,22 @@ _ET = ZoneInfo("America/New_York")
 def _now_et() -> datetime:
     """ET-aware now() for SQLAlchemy column defaults (replaces _now_et)."""
     return datetime.now(_ET)
+
+
+def et_isoformat(dt: Optional[datetime]) -> Optional[str]:
+    """ISO-8601 string with an explicit offset for a stored timestamp.
+
+    Many columns default to `_now_et()` but are declared `DateTime` (naive), so
+    they round-trip as naive ET — serializing them with `.isoformat()` drops the
+    offset and lets a browser misread the instant as UTC (e.g. a just-created
+    alert rendering as "in ~4 hours"). Stamp naive values as ET so the instant is
+    unambiguous. Already-aware values pass through.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_ET)
+    return dt.isoformat()
 
 # Try to load dotenv, but don't fail if not installed
 try:

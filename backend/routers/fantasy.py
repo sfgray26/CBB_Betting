@@ -2646,12 +2646,16 @@ async def get_fantasy_waiver_recommendations(
             key=lambda x: x.need_score, reverse=True
         )[:5]
 
-        _closer_fas = [f for f in top_available if f.category_contributions.get("nsv", 0) > 0.5]
+        # Only assert closer status when we actually have roster + free-agent data.
+        # When Yahoo is down the FA list is empty, which would otherwise fire a
+        # false "NO_CLOSERS" while the widget is STALE·unavailable (UAT 2026-07-28).
         _closer_alert = None
-        if len(_closer_fas) == 0:
-            _closer_alert = "NO_CLOSERS"
-        elif len(_closer_fas) < 2:
-            _closer_alert = "LOW_CLOSERS"
+        if my_roster and top_available:
+            _closer_fas = [f for f in top_available if f.category_contributions.get("nsv", 0) > 0.5]
+            if len(_closer_fas) == 0:
+                _closer_alert = "NO_CLOSERS"
+            elif len(_closer_fas) < 2:
+                _closer_alert = "LOW_CLOSERS"
 
         from backend.services.waiver_edge_detector import il_capacity_info as _il_cap
         _il_info = _il_cap(my_roster) if my_roster else {"used": 0, "total": 2, "available": 0}
@@ -7289,7 +7293,10 @@ async def streaming_recommendations(
 
             # Determine recommendation tier with confidence-weighted matrix
             if confidence == "PROJECTED":
-                recommendation = "PROJECTED"  # ranks between AVERAGE and GOOD
+                # Unconfirmed 2-start: cap the upside at PROJECTED, but NEVER mask a
+                # bad score — a clearly poor matchup must still read AVOID so a
+                # manager isn't lured into a bad streaming add (UAT 2026-07-28).
+                recommendation = "AVOID" if avg_quality < -0.3 else "PROJECTED"
             elif avg_quality >= 1.0 and confidence == "HIGH":
                 recommendation = "EXCELLENT"
             elif avg_quality >= 0.3 and confidence in ("HIGH", "MEDIUM"):
@@ -7310,11 +7317,12 @@ async def streaming_recommendations(
             if projected_count > 0:
                 factors.append(f"projected_starts: {projected_count}")
 
-            # Build risk note based on provenance
+            # Build risk note based on provenance. Phrasing makes the 2-start
+            # count explicit so it doesn't read as contradicting the row header.
             if official_count == 2:
                 risk_note = "Both starts confirmed — safe stream"
             elif official_count == 1:
-                risk_note = "One start projected — monitor for scratches"
+                risk_note = "1 of 2 starts projected — monitor for scratches"
             else:
                 risk_note = "Both starts projected — high variance, have backup ready"
 

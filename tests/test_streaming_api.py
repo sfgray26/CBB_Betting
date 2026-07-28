@@ -261,7 +261,7 @@ class TestStreamingRecommendationsEndpoint:
             expected_quality=1.0,
             expected_recommendation="GOOD",
             expected_confidence="MEDIUM",
-            expected_risk_note="One start projected — monitor for scratches"
+            expected_risk_note="1 of 2 starts projected — monitor for scratches"
         )
 
         # Test Case 2: both starts rotation-projected -> PROJECTED tier (not the
@@ -337,6 +337,31 @@ class TestStreamingRecommendationsEndpoint:
             expected_recommendation="AVOID",
             expected_confidence="HIGH",
             expected_risk_note="Both starts confirmed — safe stream"
+        )
+
+        # Test Case 4 (UAT 2026-07-28): a BOTH-PROJECTED pitcher with a bad quality
+        # score must still read AVOID — the PROJECTED tier must not mask a poor
+        # matchup and lure a manager into a bad streaming add.
+        mock_rows_projected_bad = [
+            MagicMock(
+                bdl_player_id=44444, pitcher_name="Bad Projected", team="COL",
+                handedness="R", game_date=date(2026, 6, 24), opponent="LAD",
+                is_home=True, quality_score=-2.0, is_confirmed=False,
+                source="projected", game_time_et="8:40 PM",
+            ),
+            MagicMock(
+                bdl_player_id=44444, pitcher_name="Bad Projected", team="COL",
+                handedness="R", game_date=date(2026, 6, 29), opponent="ARI",
+                is_home=False, quality_score=-2.0, is_confirmed=False,
+                source="projected", game_time_et="9:40 PM",
+            ),
+        ]
+        run_test_with_rows(
+            mock_rows_projected_bad,
+            expected_quality=-2.0,
+            expected_recommendation="AVOID",
+            expected_confidence="PROJECTED",
+            expected_risk_note="Both starts projected — high variance, have backup ready"
         )
 
     def test_streaming_recommendations_validates_date_format(self, fantasy_client):

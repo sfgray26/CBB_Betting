@@ -120,10 +120,12 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
   )
 
   const sorted = [...filtered].sort((a, b) => {
+    // sortDesc (↓) = descending: best-to-worst quality / Z-A name. The ternary
+    // arms were reversed, so ↓ was actually sorting worst-to-best (UAT 2026-07-28).
     if (sortField === 'quality') {
-      return sortDesc ? a.overall_quality - b.overall_quality : b.overall_quality - a.overall_quality
+      return sortDesc ? b.overall_quality - a.overall_quality : a.overall_quality - b.overall_quality
     }
-    return sortDesc ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
+    return sortDesc ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name)
   })
 
   return (
