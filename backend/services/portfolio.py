@@ -30,13 +30,19 @@ import os
 import math
 from backend.utils.env_utils import get_float_env
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+
+# Only unsettled bets newer than this window count as live "open positions".
+# Bets are game-by-game and settle within a day, so an unsettled row older than
+# this is a stale orphan (e.g. an archived-season CBB bet that was never graded)
+# and must NOT inflate current exposure / pending counts. Configurable for ops.
+_PENDING_LOOKBACK_DAYS = get_float_env("PORTFOLIO_PENDING_LOOKBACK_DAYS", "14")
 
 
 # ---------------------------------------------------------------------------
@@ -339,9 +345,21 @@ class PortfolioManager:
         """
         from backend.models import BetLog
 
+        # Scope pending exposure to RECENT unsettled bets only. An unsettled row
+        # older than the lookback is a stale orphan (games settle same-day), e.g.
+        # archived-season CBB bets that were never graded — counting them
+        # permanently inflated "open positions" (2) vs Bet History (0). Timestamps
+        # are stored naive-UTC (engine sets no PG session TZ), so compare against a
+        # naive-UTC cutoff, matching the convention used elsewhere (persist_alerts).
+        # This changes only WHICH unsettled bets count as live exposure — no
+        # Kelly/risk-math change, and settled-bet bankroll reconstruction below is
+        # untouched.
+        cutoff = datetime.utcnow() - timedelta(days=_PENDING_LOOKBACK_DAYS)
         pending_bets = (
             db.query(BetLog)
             .filter(BetLog.outcome.is_(None))
+            .filter(BetLog.timestamp.isnot(None))
+            .filter(BetLog.timestamp >= cutoff)
             .all()
         )
 
