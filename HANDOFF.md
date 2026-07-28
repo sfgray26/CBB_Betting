@@ -1,7 +1,42 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-28 | **Status:** ✅ MLB ODDS STATUS FIX DEPLOYED; YAHOO AUTH STILL DOWN
-> **Branch:** `stable/cbb-prod` | **Commit:** `7a5db4a` local deploy bundle (`3ff7df8` code + `7a5db4a` handoff)
+> **Date:** 2026-07-28 | **Status:** ✅ UAT CYCLE-2 FIXES DEPLOYED; YAHOO AUTH STILL DOWN
+> **Branch:** `stable/cbb-prod` | **Commit:** `cb979e4` local deploy bundle (`23ce1df` code + `cb979e4` handoff)
+
+---
+
+## SESSION LOG — 2026-07-28: Codex Deploy — UAT Cycle-2 Alert/Dashboard Fixes
+
+**Scope:** Reviewed Claude's Cycle-2 fix commit `23ce1df` and handoff commit
+`cb979e4`; stayed in Codex lane (verification, Railway deploys, production smoke
+checks, handoff documentation). No application code modified by Codex.
+
+**Local verification before deploy:**
+- `git diff --check` -> PASS
+- `py_compile backend/main.py backend/models.py backend/routers/edge.py tests/test_alert_timestamp.py` -> PASS via `uv run --python 3.11`
+- `pytest tests/test_alert_timestamp.py -q` -> 2 passed, 1 warning
+- Frontend `npx tsc --noEmit` -> PASS
+- Frontend `npm run build` -> PASS (pre-existing Next image/root warnings only)
+
+**Railway production deploys:**
+- Backend `Fantasy-App`: deployment `6008231e-466a-4482-9568-9b36eecb41f2` -> SUCCESS, image `sha256:aa319d58eb91cff5052633f7ab1c366578fcb03a0b79fe3f3b8d545ad0ad5e21`
+- Frontend `observant-benevolence`: deployment `f78eb6c7-0a01-4cee-afd8-1701a4ca2f5f` -> SUCCESS, image `sha256:033f2b4c28e351093304b2e61b9d90feecc3dd02c15cb56370e92f881072b50c`
+
+**Production smoke checks:**
+- Backend `/health` -> 200, `{"status":"healthy","database":"connected","scheduler":"running"}`
+- Frontend `/dashboard` -> 200
+- Protected `/api/performance/alerts` -> 200, 5 alerts returned; first raw
+  `created_at` serialized as `2026-07-28T17:59:25.232620+00:00` (`+00:00`
+  confirmed). No API key or token values printed.
+
+**Notes:**
+- Local `venv` still points at a missing Python install; Codex used the repo's
+  established `uv` verification path instead. This is a local environment issue,
+  not a deployed app failure.
+- Yahoo auth remains separate/unresolved Track A. This deploy fixes alert
+  timestamp serialization and dashboard error isolation only.
+- Bet-count mismatch remains routed to the betting owner; Codex did not touch
+  frozen betting internals.
 
 ---
 
