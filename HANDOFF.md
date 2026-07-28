@@ -1,8 +1,46 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-28 | **Status:** ✅ AUTONOMOUS AUDIT — NO ACTIONABLE ITEMS, HEALTHY
-> **Branch:** `stable/cbb-prod` | **Commit:** `58563ed`
-> **Branch:** `stable/cbb-prod` | **Commit:** `58563ed`
+> **Date:** 2026-07-28 | **Status:** ✅ UAT FIXES DEPLOYED; YAHOO AUTH STILL DOWN
+> **Branch:** `stable/cbb-prod` | **Commit:** `260670c` local deploy bundle (`3eab991` code + `260670c` handoff)
+
+---
+
+## SESSION LOG — 2026-07-28: Codex DevOps Deploy + Ops Verification
+
+**Scope:** Reviewed Claude's UAT fix commit `3eab991` and handoff commit
+`260670c`; stayed in Codex lane (verification, Railway deploys, production
+smoke checks, ops triage). No application code modified.
+
+**Local verification before deploy:**
+- `git diff --check` -> PASS
+- `py_compile backend/main.py backend/models.py backend/routers/edge.py backend/routers/fantasy.py tests/test_streaming_api.py` -> PASS
+- Focused pytest: `tests/test_streaming_api.py tests/test_alerts.py tests/test_waiver_recommendations_gates.py tests/test_waiver_recommendations_sort_contract.py tests/test_waiver_edge.py` -> 68 passed, 1 warning
+- Frontend `npx tsc --noEmit` -> PASS
+- Frontend `npm run build` -> PASS (pre-existing Next image/root warnings only)
+
+**Railway production deploys:**
+- Backend `Fantasy-App`: deployment `6e34e349-f477-44bf-8d42-93663d0ab2f5` -> SUCCESS, image `sha256:46689ad666696998e6f8c24b860b39829224b93056e5ac76a6fd37101c7eca55`
+- Frontend `observant-benevolence`: deployment `eee890c8-97c0-4cae-bae5-234f853d7360` -> SUCCESS, image `sha256:947e90be546165f9b8c9405e9baca8cca8cea013a8f61a60555b524e9428c912`
+
+**Production smoke checks:**
+- Backend `/health` -> 200, `{"status":"healthy","database":"connected","scheduler":"running"}`
+- Frontend `/war-room/streaming` -> 200
+- Streaming API `/api/fantasy/streaming/recommendations?target_date=2026-07-28&days_ahead=7` -> 200
+  - 115 pitchers; tiers: AVERAGE=2, AVOID=29, GOOD=29, PROJECTED=55
+  - `BadProjected=0` for `recommendation == PROJECTED && avg_quality < -0.3`
+
+**Ops findings after deploy:**
+- Yahoo remains a live auth outage: `/api/fantasy/yahoo-health` -> HTTP 200 transport but payload `status:"down"`, `circuit_state:"closed"`, `auth_circuit_state:"closed"`, `last_success_at:null`, error prefix `Yahoo authorization failed -- the app may need re-authentication.`
+- Production env sanity: `YAHOO_TEAM_KEY` is set; `THE_ODDS_API_KEY` is set; `ENABLE_FANTASY_SCHEDULER=true`; `CBB_SEASON_ACTIVE` unset/false.
+- The UAT "Odds Monitor Last Poll: Never" symptom is the legacy CBB odds monitor endpoint, not the active MLB odds ingestion pipeline:
+  - `/admin/odds-monitor/status` -> `active:true`, `games_tracked:0`, `last_poll:null`
+  - DailyIngestionOrchestrator is enabled; `/admin/ingestion/status` shows `mlb_odds last_status=success`, last run 2026-07-28 13:31:49 EDT, next run 2026-07-28 13:36:48 EDT
+  - Logs confirm `_poll_mlb_odds: 14 games, 14 with odds, 84 snapshots in 1432ms (window=13:30)` and `JOB COMPLETE: mlb_odds ... status=success`
+
+**Remaining routed items:**
+- Operator/Codex: Yahoo OAuth re-auth is still required to restore roster/fantasy Yahoo-backed pages. Use the approved module command, then update Railway `YAHOO_ACCESS_TOKEN` / `YAHOO_REFRESH_TOKEN` without printing token values.
+- Claude: reconcile UI/endpoint terminology so the `/odds-monitor` page does not read legacy CBB `OddsMonitor` state as MLB odds-pipeline health. The active MLB pipeline is healthy; the page/status source is stale/misleading.
+- Claude/betting owner: bet-count reconciliation remains a betting/portfolio-manager data issue; Codex did not touch frozen betting internals.
 
 ---
 
