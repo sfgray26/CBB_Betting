@@ -76,9 +76,14 @@ smoke checks, ops triage). No application code modified.
   stale/orphan positions not reflected in BetLog. Betting-lane (CBB model frozen) —
   needs the portfolio-manager owner to reconcile its position store with BetLog or
   clear stale positions. NOT touched (frozen-model guardrail).
-- **odds/slate pipeline: "Last Poll: Never", 0 games 2026-07-28.** MLB odds poll
-  (`/admin/odds-monitor/status`) never recorded a poll — job not executing in prod
-  or last_poll not persisted. Ops/pipeline (MLB betting in-dev) → Codex.
+- **odds/slate pipeline: "Last Poll: Never", 0 games 2026-07-28.** RESOLVED (Claude,
+  COMMITTED 3ff7df8) — NOT a pipeline outage. The `mlb_odds` job is healthy
+  (last_status success, 14 games / 84 snapshots); the UI just read the legacy CBB
+  `/admin/odds-monitor/status`, inactive while CBB is off-season. Added
+  `GET /admin/mlb-odds/status` (sources the mlb_odds job + today's
+  mlb_odds_snapshot⋈mlb_game_log counts); repointed /odds-monitor + admin
+  OddsMonitorPanel; legacy CBB endpoint left intact. Contract test
+  `test_mlb_odds_status.py` proves the source is the orchestrator mlb_odds state.
 - **quality scores clustered at 2.0 / 0.0, no "Excellent" ever** (minor). 0.0 =
   pitchers with no rolling-ERA data (mlbam_to_era miss); 2.0 = the `(raw-0.5)*4`
   clamp. Improves as ERA coverage / projected-row ERA fills in. Ties to the same
