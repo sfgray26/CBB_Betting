@@ -1,7 +1,61 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-28 | **Status:** ✅ UAT CYCLE-2 FIXES DEPLOYED; YAHOO AUTH STILL DOWN
-> **Branch:** `stable/cbb-prod` | **Commit:** `cb979e4` local deploy bundle (`23ce1df` code + `cb979e4` handoff)
+> **Date:** 2026-07-28 | **Status:** ⚠️ YAHOO AUTH STILL DOWN AFTER REGISTERED-REDIRECT REAUTH
+> **Branch:** `stable/cbb-prod` | **Commit:** `ec8bff4` deployed (`405c0b0`/`2c443c0`/`ec8bff4` recovery bundle)
+
+---
+
+## SESSION LOG — 2026-07-28: Codex Deploy + Yahoo Reauth Attempt
+
+**Scope:** Reviewed and deployed the five previously-unpushed commits:
+`405c0b0`, `84a04ef`, `2c443c0`, `e0a920d`, `ec8bff4`. Codex set the required
+Railway variable `YAHOO_REDIRECT_URI=https://localhost:8000/callback` and exercised
+the production admin recovery endpoints. No token values printed.
+
+**Review result:** Claude/Kimi blocker fix `ec8bff4` resolved Codex's two blockers:
+`portfolio.py` no longer uses direct `datetime.utcnow()`, and Yahoo recovery guidance
+now says to verify the existing app permission without editing/re-saving it. The
+`YAHOO_REDIRECT_URI` change is committed with tests.
+
+**Local verification before push/deploy:**
+- `git diff --check` -> PASS
+- py_compile on `backend/services/portfolio.py`, `backend/main.py`,
+  `backend/fantasy_baseball/yahoo_client_resilient.py`, and focused tests -> PASS
+- Focused pytest:
+  `tests/test_yahoo_redirect_uri.py tests/test_yahoo_reauth.py tests/test_portfolio_pending_scope.py tests/test_portfolio.py`
+  -> 24 passed, 1 warning
+
+**Railway / CI:**
+- Set `YAHOO_REDIRECT_URI=https://localhost:8000/callback` in production
+  `Fantasy-App` env.
+- Pushed `stable/cbb-prod` through `ec8bff4`.
+- GitHub Actions run `30398650933` -> SUCCESS.
+- Backend `Fantasy-App`: deployment `2a6a4caf-3fd0-4ccc-b31f-ddd8034659c5` -> SUCCESS, image `sha256:b728cbfed1e3ade4c97b8515d121f48e87de25d454d2e429a465d4d332ff99fb`.
+- Frontend `observant-benevolence`: deployment `2993832d-affb-42dd-b72f-a137a33ee6c1` -> SUCCESS, image `sha256:2f64a4f54539cbb83d1216c3bb7aca7eb84404ea5710b227036ce9f1de99a018`.
+
+**Production smoke / recovery evidence:**
+- Backend `/health` -> 200 healthy.
+- Frontend `/dashboard` -> 200.
+- `/admin/yahoo/auth-url` -> 200 and generated a consent URL with encoded
+  `redirect_uri=https://localhost:8000/callback`.
+- `/admin/yahoo/clear-token-store` -> 200,
+  `status:"cleared_but_unauthorized"`, `deleted_rows:1`; env refresh token also
+  failed with Yahoo `invalid_grant`.
+- User completed browser consent from the new registered-redirect URL and provided
+  an authorization code. `/admin/yahoo/reauth` exchanged and persisted the new
+  tokens, but verification returned `status:"tokens_stored_but_unauthorized"`:
+  Yahoo still rejects Fantasy calls with 403
+  `"This application is not authorized to perform this action"`.
+- Final `/api/fantasy/yahoo-health` -> 200 transport, payload `status:"down"`,
+  `auth_circuit_state:"open"`, `last_success_at:null`.
+
+**Current conclusion:** Code path, DB token persistence, Railway redirect config,
+server-side consent exchange, and circuit reset all worked. The remaining blocker is
+Yahoo-side grant scope/authorization for the existing app/account: Yahoo is issuing
+tokens that exchange successfully but do not carry Fantasy Sports API authorization.
+Do not repeat token-refresh or stale-store loops as the primary fix; escalate around
+Yahoo app/grant entitlement while preserving the existing app config (do not
+edit/re-save it).
 
 ---
 
