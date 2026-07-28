@@ -25,7 +25,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 import logging
@@ -43,20 +43,28 @@ def _now_et() -> datetime:
     return datetime.now(_ET)
 
 
-def et_isoformat(dt: Optional[datetime]) -> Optional[str]:
-    """ISO-8601 string with an explicit offset for a stored timestamp.
+def db_ts_isoformat(dt: Optional[datetime]) -> Optional[str]:
+    """ISO-8601 string with an explicit offset for a DB-stored timestamp.
 
-    Many columns default to `_now_et()` but are declared `DateTime` (naive), so
-    they round-trip as naive ET — serializing them with `.isoformat()` drops the
-    offset and lets a browser misread the instant as UTC (e.g. a just-created
-    alert rendering as "in ~4 hours"). Stamp naive values as ET so the instant is
-    unambiguous. Already-aware values pass through.
+    Columns declared `DateTime` (naive) round-trip WITHOUT a tzinfo. Even though
+    defaults like `_now_et()` are ET-aware, the engine sets no session timezone so
+    Postgres (session TZ = UTC by default) stores the *UTC wall-clock* and reads it
+    back naive. Serializing that with a bare `.isoformat()` — or, worse, stamping it
+    as ET — makes a browser read a just-created row as ~4h in the FUTURE. Stamp
+    naive values as UTC so the instant is correct; already-aware values pass through.
+
+    (An earlier ET-stamping version was a no-op that left the +4h future bug intact;
+    the stored value is UTC wall-clock, not ET — verified from the +4h symptom.)
     """
     if dt is None:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_ET)
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.isoformat()
+
+
+# Backwards-compat alias (previous name); prefer db_ts_isoformat.
+et_isoformat = db_ts_isoformat
 
 # Try to load dotenv, but don't fail if not installed
 try:

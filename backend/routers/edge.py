@@ -25,7 +25,7 @@ from backend.models import (
     ModelParameter,
     TeamProfile,
     DBAlert,
-    et_isoformat,
+    db_ts_isoformat,
     DataIngestionLog,
     DataFetch,
     SessionLocal,
@@ -722,7 +722,7 @@ async def get_performance_alerts(
                 "threshold": a.threshold,
                 "current_value": a.current_value,
                 "acknowledged": a.acknowledged,
-                "created_at": et_isoformat(a.created_at),
+                "created_at": db_ts_isoformat(a.created_at),
             }
             for a in db_alerts
         ],

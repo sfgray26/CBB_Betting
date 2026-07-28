@@ -806,7 +806,15 @@ export function ProbablePitchersWidget() {
 // ─── Two-Start Pitchers Widget ────────────────────────────────────────────────
 
 export function TwoStartPitchersWidget() {
-  const { data: response } = useDashboardData()
+  // Non-suspense query so a Yahoo/dashboard failure degrades this widget to
+  // nothing instead of THROWING into its ErrorBoundary — a suspense throw here
+  // rendered a red "Failed to load" that made the whole dashboard look crashed
+  // (UAT 2026-07-28). Shares the ["dashboard"] cache; no extra fetch.
+  const { data: response } = useQuery({
+    queryKey: ["dashboard"],
+    queryFn: endpoints.getDashboard,
+    retry: 1,
+  })
   const pitchers = response?.success ? response.data.two_start_pitchers : []
 
   if (pitchers.length === 0) return null
