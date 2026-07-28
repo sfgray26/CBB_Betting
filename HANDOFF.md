@@ -77,6 +77,40 @@ smoke checks, ops triage). No application code modified.
 
 ---
 
+## UAT 2026-07-28 CYCLE 2 — Claude fixes (COMMITTED 23ce1df)
+
+- **Alert future-timestamp — REAL fix (my cycle-1 fix was a no-op).** The stored
+  naive `created_at` is UTC wall-clock (engine sets no PG session TZ, so `_now_et()`
+  lands as UTC), NOT ET. My earlier `et_isoformat` stamped ET → left the +4h future
+  offset intact. `db_ts_isoformat` now stamps UTC; applied at both
+  `/api/performance/alerts` serializers. Regression test asserts `+00:00`.
+- **Dashboard "Two-Start Pitchers" error isolation.** Widget used
+  `useDashboardData()` (useSuspenseQuery) which THROWS when the Yahoo-coupled
+  `/api/dashboard` fails → red "Failed to load" that looked like a dashboard crash.
+  Switched to non-suspense `useQuery` (same cache key) → degrades to null, isolated
+  from the Yahoo panels. (Note: this widget IS roster-derived — needs Yahoo — so it
+  legitimately shows nothing during an outage; it just no longer crashes.)
+
+**Precise diagnosis for the betting owner (bet-count mismatch, still routed):**
+`portfolio.load_from_db` (portfolio.py:342-345) counts ALL `BetLog` rows with
+`outcome IS NULL` with NO season/date scope → 2 stale unsettled CBB bets from the
+archived season inflate "Open Positions: 2 pending" forever, while Bet History
+filters them out (→ 0). FIX (betting-lane, not done — frozen-CBB guardrail):
+settle/void the 2 orphan CBB `bet_logs` rows (data cleanup) OR scope
+`load_from_db`'s pending query to the active season/date. Not touched by Claude.
+
+**Still routed / by-design this cycle:**
+- Yahoo auth outage — unchanged, operator Track A (OAuth re-run + Railway token vars).
+- Today's Bets / Live Slate 0 games while odds shows 11 — the MLB odds *data*
+  pipeline works (my mlb_odds fix); the MLB *betting model* (mlb_analysis.py) is
+  stub-level per CLAUDE.md, so no picks are generated. By design until the MLB
+  model ships. Not a bug.
+- Excellent tier always 0 / quality clustered at 0.0/2.0 — ERA-lookup coverage
+  (mlbam→ERA miss → 0.0 neutral) + the (raw-0.5)*4 clamp. Same ID-mapping/coverage
+  gap; improves as coverage fills. Noted, not urgent.
+
+---
+
 ## UAT 2026-07-28 (full 15-screen pass) — Claude triage + fixes (COMMITTED 3eab991)
 
 **Fixed by Claude (in lane):**
