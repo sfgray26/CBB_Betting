@@ -112,6 +112,45 @@ smoke checks, ops triage). No application code modified.
 
 ---
 
+## Yahoo auth recovery — tooling + runbook (COMMITTED 2c443c0)
+
+Persistent 403 ("auth circuit OPEN"). Refresh + DB token persistence are healthy →
+the OAuth GRANT lacks Fantasy authorization (credential fix, not code). Added
+server-side recovery endpoints (all admin-key gated). **Deploy 2c443c0 first**, then:
+
+**Step 0 (cheap — try first). The DB token store overrides env; it was added
+recently and may hold a bad pair that defeats good env tokens. Clear it:**
+```
+curl -X POST "$BASE/admin/yahoo/clear-token-store" -H "X-API-Key: $ADMIN_KEY"
+```
+- `status:"ok"` → FIXED (env tokens were valid; DB store was the culprit). Done.
+- `status:"cleared_but_unauthorized"` → env tokens also bad; go to Step 1.
+
+**Step 1. Confirm the Yahoo developer app (developer.yahoo.com) has Fantasy Sports
+(Read or Read/Write) permission ENABLED and SAVED. If unsure, re-save it, or create
+a NEW app (then update Railway YAHOO_CLIENT_ID + YAHOO_CLIENT_SECRET and redeploy).**
+
+**Step 2. Full server-side re-auth (no local run / no Railway token juggling):**
+```
+# a) get the consent URL, open it in a browser, approve, copy the code:
+curl "$BASE/admin/yahoo/auth-url" -H "X-API-Key: $ADMIN_KEY"
+# b) exchange the code — persists fresh tokens to the prod DB store + verifies:
+curl -X POST "$BASE/admin/yahoo/reauth?code=THE_CODE" -H "X-API-Key: $ADMIN_KEY"
+```
+- `status:"ok"` → FIXED (in-memory tokens updated + DB-persisted; no redeploy needed).
+- `status:"tokens_stored_but_unauthorized"` → the app grant still lacks Fantasy
+  auth. The Yahoo app permission is the problem (Step 1) — fix/recreate the app,
+  then repeat Step 2.
+
+**Verify:** `curl "$BASE/admin/yahoo/test" -H "X-API-Key:$ADMIN_KEY"` → league name +
+team key; `GET /api/fantasy/yahoo-health` → status:"healthy".
+
+Tooling is code-complete + tested (test_yahoo_reauth.py, 12 pass). The actual grant
+restore is operator-side (browser consent + Yahoo app permission) — Claude cannot
+perform the Yahoo consent.
+
+---
+
 ## Bet-count reconciliation — DECISION + fix (COMMITTED 405c0b0)
 
 **Decision: CODE FIX (option 2), not data cleanup.** Rationale: durable (future
