@@ -4686,6 +4686,122 @@ async def yahoo_test(user: str = Depends(verify_admin_api_key)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/admin/yahoo/auth-url")
+async def yahoo_auth_url(user: str = Depends(verify_admin_api_key)):
+    """Production Yahoo re-auth, step 1: return the consent URL to open in a
+    browser. Approve access, copy the shown code, then POST it to
+    /admin/yahoo/reauth.
+
+    PRECONDITION: the Yahoo developer app (developer.yahoo.com) must have Fantasy
+    Sports (Read or Read/Write) permission enabled and SAVED — otherwise the grant
+    will still return 403 and step 2 will report it.
+    """
+    client = get_yahoo_client()
+    if not getattr(client, "client_id", ""):
+        raise HTTPException(status_code=503, detail="YAHOO_CLIENT_ID is not set")
+    return {
+        "auth_url": client.get_authorization_url(),
+        "next": "Open auth_url, approve access, then POST /admin/yahoo/reauth?code=<CODE>",
+    }
+
+
+@app.post("/admin/yahoo/reauth")
+async def yahoo_reauth(code: str, user: str = Depends(verify_admin_api_key)):
+    """Production Yahoo re-auth, step 2: exchange the consent code for fresh tokens,
+    persist them to the production DB token store, reset the auth-failure circuit,
+    and verify with a real Fantasy API call. Tokens are NOT returned.
+
+    Outcomes:
+    - status "ok": the grant is valid — fantasy stack should recover immediately
+      (in-memory tokens updated + DB-persisted for future redeploys).
+    - status "tokens_stored_but_unauthorized": the exchange worked but Yahoo still
+      rejects Fantasy calls — the app grant lacks Fantasy authorization. Fix the
+      Yahoo developer app permission (or create a new app) and repeat.
+    """
+    client = get_yahoo_client()
+    client.reset_auth_circuit()
+    try:
+        client.exchange_code_for_tokens(code)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}")
+
+    # Verify the fresh grant actually carries Fantasy Sports authorization.
+    try:
+        team_key = client.get_my_team_key()
+        league = client.get_league()
+        return {
+            "status": "ok",
+            "verified": True,
+            "message": "Fresh Yahoo grant active and persisted; Fantasy API reachable.",
+            "my_team_key": team_key,
+            "league_name": league.get("name"),
+        }
+    except Exception as exc:
+        return {
+            "status": "tokens_stored_but_unauthorized",
+            "verified": False,
+            "message": (
+                "Tokens exchanged and persisted, but the Fantasy API still rejected "
+                "them — the Yahoo app grant lacks Fantasy Sports authorization. At "
+                "developer.yahoo.com, enable + SAVE Fantasy Sports (Read/Write) "
+                "permission on the app (or create a new app and update "
+                "YAHOO_CLIENT_ID/SECRET), then repeat /admin/yahoo/auth-url -> reauth."
+            ),
+            "error": str(exc),
+        }
+
+
+@app.post("/admin/yahoo/clear-token-store")
+async def yahoo_clear_token_store(user: str = Depends(verify_admin_api_key)):
+    """Recovery lever: delete DB-persisted Yahoo tokens so the client falls back to
+    the (freshly-updated) Railway env vars.
+
+    The DB token store OVERRIDES env tokens. If it captured a stale/bad token pair,
+    it can defeat a correct YAHOO_REFRESH_TOKEN/ACCESS_TOKEN env update. This clears
+    the store, drops the client singletons, resets the auth circuit, and verifies
+    against a real Fantasy call using the env tokens.
+    """
+    from backend.models import SessionLocal, YahooOAuthToken
+    from backend.fantasy_baseball.yahoo_client_resilient import reset_client_singleton
+
+    deleted = 0
+    db = SessionLocal()
+    try:
+        deleted = db.query(YahooOAuthToken).delete()
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to clear token store: {exc}")
+    finally:
+        db.close()
+
+    reset_client_singleton()
+    client = get_yahoo_client()  # re-inits from env (DB store now empty)
+    client.reset_auth_circuit()
+    try:
+        team_key = client.get_my_team_key()
+        return {
+            "status": "ok",
+            "verified": True,
+            "deleted_rows": deleted,
+            "message": "DB token store cleared; env tokens are valid; Fantasy API reachable.",
+            "my_team_key": team_key,
+        }
+    except Exception as exc:
+        return {
+            "status": "cleared_but_unauthorized",
+            "verified": False,
+            "deleted_rows": deleted,
+            "message": (
+                "DB token store cleared, but the env tokens were also rejected. A "
+                "fresh grant is needed — use /admin/yahoo/auth-url then "
+                "/admin/yahoo/reauth (after confirming the Yahoo app's Fantasy "
+                "Sports permission)."
+            ),
+            "error": str(exc),
+        }
+
+
 @app.get("/admin/yahoo/roster-raw")
 async def yahoo_roster_raw(user: str = Depends(verify_admin_api_key)):
     """

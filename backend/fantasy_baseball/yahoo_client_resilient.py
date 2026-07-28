@@ -413,6 +413,11 @@ class YahooFantasyClient:
         self._auth_circuit_open_until = None
         self._auth_outage_alert_sent_for_open_until = None
 
+    def reset_auth_circuit(self) -> None:
+        """Manually clear the auth-failure circuit (admin recovery, e.g. after a
+        fresh OAuth grant). Safe to call anytime — just clears failure counters."""
+        self._record_yahoo_auth_success()
+
     def _record_yahoo_auth_failure(self, status_code: int = 403) -> None:
         now = time.time()
         if (
@@ -2783,6 +2788,17 @@ _client_lock = threading.Lock()
 
 _resilient_client: "Optional[ResilientYahooClient]" = None
 _resilient_client_lock = threading.Lock()
+
+
+def reset_client_singleton() -> None:
+    """Drop the cached Yahoo client singletons so the next get_yahoo_client()
+    re-initializes (re-reads env + DB tokens). Used by admin recovery after
+    clearing or updating persisted tokens."""
+    global _client, _resilient_client
+    with _client_lock:
+        _client = None
+    with _resilient_client_lock:
+        _resilient_client = None
 
 
 def get_yahoo_client() -> "YahooFantasyClient":
